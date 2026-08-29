@@ -16,14 +16,15 @@ router.post('/', requireAuth, requireRole('teacher'), (req, res) => {
   if (!Array.isArray(sections) || sections.length === 0) return res.status(400).json({ error: 'sections required' })
   if (!total_marks || total_marks < 1) return res.status(400).json({ error: 'total_marks required' })
 
-  // Validate that all pdf_ids belong to this teacher
+  // Validate that all pdf_ids are usable by this teacher (own + admin-uploaded)
   if (pdf_ids.length > 0) {
     const placeholders = pdf_ids.map(() => '?').join(',')
     const owned = db.prepare(
-      `SELECT id FROM chapter_pdfs WHERE teacher_id = ? AND id IN (${placeholders})`
-    ).all(req.user.id, ...pdf_ids)
+      `SELECT p.id FROM chapter_pdfs p JOIN users u ON p.teacher_id = u.id
+       WHERE p.id IN (${placeholders}) AND (p.teacher_id = ? OR u.role = 'admin')`
+    ).all(...pdf_ids, req.user.id)
     if (owned.length !== pdf_ids.length) {
-      return res.status(403).json({ error: 'One or more PDFs do not belong to you' })
+      return res.status(403).json({ error: 'One or more PDFs are not available' })
     }
   }
 

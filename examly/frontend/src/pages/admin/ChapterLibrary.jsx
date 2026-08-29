@@ -4,34 +4,39 @@ import api from '../../lib/api.js'
 const SUBJECTS = ['Mathematics', 'English', 'Hindi', 'Science', 'Social Science', 'EVS', 'Sanskrit', 'Computer Science']
 const CLASSES = ['1','2','3','4','5','6','7','8','9','10','11','12']
 
-export default function PDFs() {
+export default function ChapterLibrary() {
   const [pdfs, setPdfs] = useState([])
+  const [teachers, setTeachers] = useState([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
 
-  // form state
   const [file, setFile] = useState(null)
   const [subject, setSubject] = useState('Mathematics')
   const [classLevel, setClassLevel] = useState('10')
   const [chapterLabel, setChapterLabel] = useState('')
+  const [assignTo, setAssignTo] = useState('')
 
-  async function loadPdfs() {
+  async function load() {
     try {
-      const { data } = await api.get('/pdfs')
-      setPdfs(data.pdfs)
-    } catch (err) {
-      setError('Failed to load PDFs')
+      const [pdfsRes, teachersRes] = await Promise.all([
+        api.get('/pdfs'),
+        api.get('/teachers'),
+      ])
+      setPdfs(pdfsRes.data.pdfs)
+      setTeachers(teachersRes.data.teachers.filter((t) => t.active))
+    } catch {
+      setError('Failed to load')
     } finally {
       setLoading(false)
     }
   }
 
-  useEffect(() => { loadPdfs() }, [])
+  useEffect(() => { load() }, [])
 
   async function handleUpload(e) {
     e.preventDefault()
-    if (!file) return setError('Choose a PDF file')
+    if (!file) return setError('Choose a PDF')
     if (!chapterLabel.trim()) return setError('Enter chapter label')
 
     setError('')
@@ -42,12 +47,10 @@ export default function PDFs() {
       fd.append('subject', subject)
       fd.append('class_level', classLevel)
       fd.append('chapter_label', chapterLabel)
-      await api.post('/pdfs', fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      })
-      setFile(null)
-      setChapterLabel('')
-      await loadPdfs()
+      if (assignTo) fd.append('teacher_id', assignTo)
+      await api.post('/pdfs', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+      setFile(null); setChapterLabel('')
+      await load()
     } catch (err) {
       setError(err.response?.data?.error || err.message)
     } finally {
@@ -55,24 +58,17 @@ export default function PDFs() {
     }
   }
 
-  async function handleDelete(id) {
-    if (!confirm('Delete this PDF?')) return
-    try {
-      await api.delete(`/pdfs/${id}`)
-      await loadPdfs()
-    } catch (err) {
-      setError(err.response?.data?.error || 'Delete failed')
-    }
-  }
-
   return (
     <div className="p-8 max-w-6xl">
-      <h1 className="text-3xl font-semibold text-slate-900">Chapter PDFs</h1>
-      <p className="text-slate-500 mt-1 mb-6">Upload the chapter content you've taught. The system uses this to generate questions.</p>
+      <div className="mb-6">
+        <h1 className="text-3xl font-semibold text-slate-900">Chapter Library</h1>
+        <p className="text-slate-500 mt-1">
+          All uploaded chapter PDFs across teachers. Upload chapters on behalf of any teacher, or as the school library (visible to all).
+        </p>
+      </div>
 
-      {/* Upload card */}
       <div className="bg-white rounded-2xl border border-slate-200 p-6 mb-6">
-        <h2 className="text-lg font-semibold mb-4">Upload a new chapter</h2>
+        <h2 className="text-lg font-semibold mb-4">Upload chapter (admin)</h2>
         <form onSubmit={handleUpload} className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="text-sm font-medium block mb-1">Subject</label>
@@ -95,6 +91,19 @@ export default function PDFs() {
               className="w-full px-3 py-2 rounded-lg border border-slate-300" />
           </div>
           <div className="md:col-span-2">
+            <label className="text-sm font-medium block mb-1">Assign to teacher (optional)</label>
+            <select value={assignTo} onChange={(e) => setAssignTo(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-slate-300">
+              <option value="">— School Library (visible to all teachers) —</option>
+              {teachers.map((t) => (
+                <option key={t.id} value={t.id}>{t.full_name || t.username} ({t.username})</option>
+              ))}
+            </select>
+            <p className="text-xs text-slate-500 mt-1">
+              Leave as "School Library" so any teacher can use it. Assign to a specific teacher to make it private to them.
+            </p>
+          </div>
+          <div className="md:col-span-2">
             <label className="text-sm font-medium block mb-1">PDF file</label>
             <input type="file" accept="application/pdf" onChange={(e) => setFile(e.target.files?.[0])}
               className="w-full text-sm" />
@@ -105,18 +114,16 @@ export default function PDFs() {
 
           <div className="md:col-span-2">
             <button disabled={uploading} type="submit"
-              className="px-5 py-2 rounded-lg bg-brand-500 text-white font-medium hover:bg-brand-600 transition disabled:opacity-60">
+              className="px-5 py-2 rounded-lg bg-brand-500 text-white font-medium hover:bg-brand-600 disabled:opacity-60">
               {uploading ? 'Uploading…' : 'Upload chapter'}
             </button>
           </div>
         </form>
       </div>
 
-      {/* List */}
       <div className="bg-white rounded-2xl border border-slate-200">
         <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Your uploaded chapters</h2>
-          <span className="text-sm text-slate-500">{pdfs.length} total</span>
+          <h2 className="text-lg font-semibold">All chapters ({pdfs.length})</h2>
         </div>
         {loading ? (
           <div className="p-8 text-center text-slate-500">Loading…</div>
@@ -129,37 +136,26 @@ export default function PDFs() {
                 <th className="text-left px-6 py-3">Chapter</th>
                 <th className="text-left px-6 py-3">Subject</th>
                 <th className="text-left px-6 py-3">Class</th>
+                <th className="text-left px-6 py-3">Owner</th>
                 <th className="text-left px-6 py-3">Uploaded</th>
-                <th className="px-6 py-3"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {pdfs.map((p) => {
-                const isLibrary = p.teacher_role === 'admin'
-                return (
-                  <tr key={p.id} className="hover:bg-slate-50">
-                    <td className="px-6 py-3 font-medium text-slate-900">
-                      <div className="flex items-center gap-2">
-                        {p.chapter_label}
-                        {isLibrary && (
-                          <span className="inline-block px-2 py-0.5 rounded-full bg-brand-50 text-brand-700 text-xs font-medium">
-                            �� School Library
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-3 text-slate-600">{p.subject}</td>
-                    <td className="px-6 py-3 text-slate-600">Class {p.class_level}</td>
-                    <td className="px-6 py-3 text-slate-500 text-sm">{new Date(p.uploaded_at + 'Z').toLocaleString()}</td>
-                    <td className="px-6 py-3 text-right">
-                      {!isLibrary && (
-                        <button onClick={() => handleDelete(p.id)}
-                          className="text-sm text-red-600 hover:underline">Delete</button>
-                      )}
-                    </td>
-                  </tr>
-                )
-              })}
+              {pdfs.map((p) => (
+                <tr key={p.id} className="hover:bg-slate-50">
+                  <td className="px-6 py-3 font-medium text-slate-900">{p.chapter_label}</td>
+                  <td className="px-6 py-3 text-slate-600">{p.subject}</td>
+                  <td className="px-6 py-3 text-slate-600">Class {p.class_level}</td>
+                  <td className="px-6 py-3 text-slate-600">
+                    {p.teacher_role === 'admin' ? (
+                      <span className="inline-block px-2 py-0.5 rounded-full bg-brand-50 text-brand-700 text-xs font-medium">School Library</span>
+                    ) : (
+                      <span className="text-sm">{p.teacher_name || p.teacher_username}</span>
+                    )}
+                  </td>
+                  <td className="px-6 py-3 text-slate-500 text-sm">{new Date(p.uploaded_at + 'Z').toLocaleString()}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         )}

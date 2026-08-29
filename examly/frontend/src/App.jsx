@@ -9,6 +9,7 @@ import AdminRequests from './pages/admin/AdminRequests.jsx'
 import GeneratePaper from './pages/admin/GeneratePaper.jsx'
 import PaperHistory from './pages/admin/PaperHistory.jsx'
 import TeacherManagement from './pages/admin/TeacherManagement.jsx'
+import ChapterLibrary from './pages/admin/ChapterLibrary.jsx'
 import TeacherDashboard from './pages/teacher/Dashboard.jsx'
 import TeacherPDFs from './pages/teacher/PDFs.jsx'
 import NewRequest from './pages/teacher/NewRequest.jsx'
@@ -42,6 +43,7 @@ function AppRoutes() {
         <Route path="generate/:id" element={<GeneratePaper />} />
         <Route path="papers" element={<PaperHistory />} />
         <Route path="teachers" element={<TeacherManagement />} />
+        <Route path="library" element={<ChapterLibrary />} />
       </Route>
 
       <Route

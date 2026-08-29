@@ -31,15 +31,29 @@ const upload = multer({
 
 const router = express.Router()
 
-// Upload chapter PDF (teacher only)
-router.post('/', requireAuth, requireRole('teacher'), upload.single('file'), async (req, res) => {
+// Upload chapter PDF (teacher OR admin)
+router.post('/', requireAuth, upload.single('file'), async (req, res) => {
   try {
-    const { subject, class_level, chapter_label } = req.body
+    const { subject, class_level, chapter_label, teacher_id } = req.body
     if (!req.file) return res.status(400).json({ error: 'PDF file required' })
     if (!subject || !class_level || !chapter_label) {
-      // cleanup
       fs.unlinkSync(req.file.path)
       return res.status(400).json({ error: 'subject, class_level, chapter_label required' })
+    }
+
+    // Determine owner: admin can specify, teacher always owns their own
+    let ownerId = req.user.id
+    if (req.user.role === 'admin') {
+      if (teacher_id) {
+        const t = db.prepare(`SELECT id FROM users WHERE id = ? AND role = 'teacher' AND active = 1`).get(teacher_id)
+        if (!t) {
+          fs.unlinkSync(req.file.path)
+          return res.status(400).json({ error: 'Invalid teacher_id' })
+        }
+        ownerId = Number(teacher_id)
+      } else {
+        ownerId = req.user.id // admin uploads owned by admin → still usable in any teacher's request
+      }
     }
 
     // Extract text
@@ -55,18 +69,20 @@ router.post('/', requireAuth, requireRole('teacher'), upload.single('file'), asy
       `INSERT INTO chapter_pdfs (teacher_id, subject, class_level, chapter_label, original_filename, stored_filename, extracted_text)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
     ).run(
-      req.user.id,
+      ownerId,
       subject,
       class_level,
       chapter_label,
       req.file.originalname,
       req.file.filename,
-      extracted.slice(0, 200000) // cap to 200k chars
+      extracted.slice(0, 200000)
     )
 
     logAction(req.user.id, 'pdf_uploaded', {
       pdf_id: info.lastInsertRowid,
       subject, class_level, chapter_label,
+      uploaded_by_role: req.user.role,
+      owner_id: ownerId,
       chars_extracted: extracted.length,
     })
 
@@ -85,21 +101,24 @@ router.post('/', requireAuth, requireRole('teacher'), upload.single('file'), asy
   }
 })
 
-// List teacher's PDFs (teacher) or all PDFs (admin)
+// List PDFs (admin: all; teacher: own + admin-uploaded for visibility)
 router.get('/', requireAuth, (req, res) => {
   let rows
   if (req.user.role === 'admin') {
     rows = db.prepare(
-      `SELECT p.*, u.full_name as teacher_name, u.username as teacher_username
+      `SELECT p.*, u.full_name as teacher_name, u.username as teacher_username, u.role as teacher_role
        FROM chapter_pdfs p JOIN users u ON p.teacher_id = u.id
        ORDER BY p.uploaded_at DESC`
     ).all()
   } else {
+    // Teacher sees their own PDFs + any PDFs uploaded by admin (admin_id = 1 by convention but we join properly)
     rows = db.prepare(
-      `SELECT * FROM chapter_pdfs WHERE teacher_id = ? ORDER BY uploaded_at DESC`
+      `SELECT p.*, u.full_name as teacher_name, u.username as teacher_username, u.role as teacher_role
+       FROM chapter_pdfs p JOIN users u ON p.teacher_id = u.id
+       WHERE p.teacher_id = ? OR u.role = 'admin'
+       ORDER BY p.uploaded_at DESC`
     ).all(req.user.id)
   }
-  // Don't send huge extracted_text in list
   const safe = rows.map(({ extracted_text, ...r }) => ({
     ...r,
     has_text: !!extracted_text && extracted_text.length > 0,
@@ -107,11 +126,17 @@ router.get('/', requireAuth, (req, res) => {
   res.json({ pdfs: safe })
 })
 
-// Get one PDF's extracted text (teacher who owns it, or admin)
+// Get one PDF's extracted text (teacher who owns it, or admin, or any teacher asking for an admin-uploaded PDF)
 router.get('/:id/text', requireAuth, (req, res) => {
-  const row = db.prepare(`SELECT * FROM chapter_pdfs WHERE id = ?`).get(req.params.id)
+  const row = db.prepare(`
+    SELECT p.*, u.role as owner_role
+    FROM chapter_pdfs p JOIN users u ON p.teacher_id = u.id
+    WHERE p.id = ?
+  `).get(req.params.id)
   if (!row) return res.status(404).json({ error: 'Not found' })
-  if (req.user.role !== 'admin' && row.teacher_id !== req.user.id) {
+  const isOwn = row.teacher_id === req.user.id
+  const isAdminOwned = row.owner_role === 'admin'
+  if (req.user.role !== 'admin' && !isOwn && !isAdminOwned) {
     return res.status(403).json({ error: 'Forbidden' })
   }
   res.json({ id: row.id, chapter_label: row.chapter_label, text: row.extracted_text || '' })
