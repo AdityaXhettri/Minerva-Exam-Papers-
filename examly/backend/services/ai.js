@@ -64,27 +64,15 @@ Rules:
 }
 
 async function callOpenAI({ apiKey, prompt, baseURL = 'https://api.openai.com/v1', model = null }) {
-  // Detect Groq reasoning models — they need higher token limit and don't support response_format the same way
-  const isGroq = baseURL.includes('groq.com')
-  const isReasoningModel = isGroq && (model || '').includes('gpt-oss') || (model || '').includes('compound')
-
   const body = {
     model: model || process.env.OPENAI_MODEL || 'gpt-4o-mini',
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: prompt },
     ],
+    response_format: { type: 'json_object' },
     temperature: 0.7,
-  }
-  if (!isReasoningModel) {
-    body.response_format = { type: 'json_object' }
-  }
-  if (isReasoningModel) {
-    // Reasoning models need much more tokens; reserve space for thinking + answer
-    body.max_tokens = 16000
-    body.reasoning_effort = 'medium'
-  } else {
-    body.max_tokens = 8000
+    max_tokens: 6000,
   }
 
   const res = await fetch(`${baseURL}/chat/completions`, {
