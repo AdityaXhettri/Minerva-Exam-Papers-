@@ -63,15 +63,15 @@ Rules:
 - Total marks across all questions MUST equal ${totalMarks}`
 }
 
-async function callOpenAI({ apiKey, prompt }) {
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+async function callOpenAI({ apiKey, prompt, baseURL = 'https://api.openai.com/v1', model = null }) {
+  const res = await fetch(`${baseURL}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      model: model || process.env.OPENAI_MODEL || 'gpt-4o-mini',
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: prompt },
@@ -82,7 +82,7 @@ async function callOpenAI({ apiKey, prompt }) {
   })
   if (!res.ok) {
     const t = await res.text()
-    throw new Error(`OpenAI error ${res.status}: ${t.slice(0, 200)}`)
+    throw new Error(`OpenAI-compatible error ${res.status}: ${t.slice(0, 200)}`)
   }
   const data = await res.json()
   return data.choices[0].message.content
@@ -112,6 +112,13 @@ export async function generateQuestions({ provider, chaptersText, request }) {
   let raw
   if (provider === 'openai') {
     raw = await callOpenAI({ apiKey: process.env.OPENAI_API_KEY, prompt })
+  } else if (provider === 'groq') {
+    raw = await callOpenAI({
+      apiKey: process.env.GROQ_API_KEY,
+      prompt,
+      baseURL: 'https://api.groq.com/openai/v1',
+      model: process.env.GROQ_MODEL || 'llama-3.1-8b-instant',
+    })
   } else if (provider === 'gemini') {
     raw = await callGemini({ apiKey: process.env.GEMINI_API_KEY, prompt })
   } else {
@@ -131,6 +138,7 @@ export async function generateQuestions({ provider, chaptersText, request }) {
 }
 
 export function activeProvider() {
+  if (process.env.GROQ_API_KEY) return 'groq'
   if (process.env.OPENAI_API_KEY) return 'openai'
   if (process.env.GEMINI_API_KEY) return 'gemini'
   return null
