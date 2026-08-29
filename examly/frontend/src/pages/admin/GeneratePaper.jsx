@@ -5,6 +5,7 @@ import jsPDF from 'jspdf'
 
 const TYPE_LABEL = {
   mcq: 'Multiple Choice Questions',
+  vshort: 'Very Short Answer Questions',
   short: 'Short Answer Questions',
   long: 'Long Answer Questions',
   fill: 'Fill in the Blanks',

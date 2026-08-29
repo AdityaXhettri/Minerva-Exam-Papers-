@@ -6,6 +6,7 @@ const SUBJECTS = ['Mathematics', 'English', 'Hindi', 'Science', 'Social Science'
 const CLASSES = ['1','2','3','4','5','6','7','8','9','10','11','12']
 const SECTION_TYPES = [
   { value: 'mcq', label: 'MCQ' },
+  { value: 'vshort', label: 'Very Short Answer' },
   { value: 'short', label: 'Short Answer' },
   { value: 'long', label: 'Long Answer' },
   { value: 'fill', label: 'Fill in the Blanks' },

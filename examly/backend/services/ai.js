@@ -56,6 +56,7 @@ Return JSON in EXACTLY this shape:
 Rules:
 - Include "options" and "correct" only when type is "mcq" or "truefalse"
 - For "truefalse", options are ["(a) True", "(b) False"]
+- For "vshort", ask 1-3 word answers (definitions, terms, one-line answers). NO options.
 - "correct" must match one of the options exactly
 - Distribute difficulty across the requested mix (Easy/Medium/Hard percentages)
 - Question text should reference the chapter content; do not invent facts outside the chapter
