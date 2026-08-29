@@ -33,12 +33,19 @@ router.post('/generate', requireAuth, requireRole('admin'), async (req, res) => 
         `SELECT chapter_label, original_filename, extracted_text FROM chapter_pdfs WHERE id IN (${placeholders})`
       ).all(...pdfIds)
       chaptersText = pdfs.map((p) =>
-        `--- Chapter: ${p.chapter_label} (file: ${p.original_filename}) ---\n${(p.extracted_text || '').slice(0, 30000)}`
+        `--- Chapter: ${p.chapter_label} (file: ${p.original_filename}) ---\n${(p.extracted_text || '').slice(0, 8000)}`
       ).join('\n\n')
     }
 
     if (!chaptersText.trim()) {
       return res.status(400).json({ error: 'No chapter content found for this request. Make sure the teacher uploaded PDFs and they had extractable text.' })
+    }
+
+    // Truncate chapter text to stay within Groq's per-minute token limit (roughly 4 chars per token)
+    // Conservative cap: ~18000 chars (~4500 tokens) leaves room for prompt + response
+    const MAX_CHARS = 18000
+    if (chaptersText.length > MAX_CHARS) {
+      chaptersText = chaptersText.slice(0, MAX_CHARS) + '\n\n[...chapter content truncated for length...]'
     }
 
     const paper = await generateQuestions({

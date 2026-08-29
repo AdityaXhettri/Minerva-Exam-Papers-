@@ -24,7 +24,7 @@ ${sectionPlan}
 ${instructions ? `Special instructions: ${instructions}\n` : ''}
 
 === CHAPTER CONTENT (use ONLY this to generate questions) ===
-${chaptersText.slice(0, 60000)}
+${chaptersText}
 === END CHAPTER CONTENT ===
 
 Return JSON in EXACTLY this shape:
@@ -64,28 +64,43 @@ Rules:
 }
 
 async function callOpenAI({ apiKey, prompt, baseURL = 'https://api.openai.com/v1', model = null }) {
+  // Detect Groq reasoning models — they need higher token limit and don't support response_format the same way
+  const isGroq = baseURL.includes('groq.com')
+  const isReasoningModel = isGroq && (model || '').includes('gpt-oss') || (model || '').includes('compound')
+
+  const body = {
+    model: model || process.env.OPENAI_MODEL || 'gpt-4o-mini',
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: prompt },
+    ],
+    temperature: 0.7,
+  }
+  if (!isReasoningModel) {
+    body.response_format = { type: 'json_object' }
+  }
+  if (isReasoningModel) {
+    // Reasoning models need much more tokens; reserve space for thinking + answer
+    body.max_tokens = 16000
+    body.reasoning_effort = 'medium'
+  } else {
+    body.max_tokens = 8000
+  }
+
   const res = await fetch(`${baseURL}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
-      model: model || process.env.OPENAI_MODEL || 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: prompt },
-      ],
-      response_format: { type: 'json_object' },
-      temperature: 0.7,
-    }),
+    body: JSON.stringify(body),
   })
   if (!res.ok) {
     const t = await res.text()
     throw new Error(`OpenAI-compatible error ${res.status}: ${t.slice(0, 200)}`)
   }
   const data = await res.json()
-  return data.choices[0].message.content
+  return data.choices[0].message.content || ''
 }
 
 async function callGemini({ apiKey, prompt }) {
