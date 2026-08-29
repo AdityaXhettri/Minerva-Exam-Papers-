@@ -42,6 +42,7 @@ function AppRoutes() {
         <Route path="requests" element={<AdminRequests />} />
         <Route path="generate/:id" element={<GeneratePaper />} />
         <Route path="papers" element={<PaperHistory />} />
+        <Route path="papers/:id" element={<ViewPaper />} />
         <Route path="teachers" element={<TeacherManagement />} />
         <Route path="library" element={<ChapterLibrary />} />
       </Route>

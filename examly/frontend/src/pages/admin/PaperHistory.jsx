@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import api from '../../lib/api.js'
 
 export default function PaperHistory() {
+  const navigate = useNavigate()
   const [papers, setPapers] = useState([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('')
@@ -21,8 +23,12 @@ export default function PaperHistory() {
 
   return (
     <div className="p-8 max-w-6xl">
-      <h1 className="text-3xl font-semibold text-slate-900">Paper history</h1>
-      <p className="text-slate-500 mt-1 mb-6">All generated papers.</p>
+      <div className="mb-6">
+        <h1 className="text-3xl font-semibold text-slate-900">Paper history</h1>
+        <p className="text-slate-500 mt-1">
+          Click any row to view the paper, see answers, and re-download the PDF.
+        </p>
+      </div>
 
       <div className="bg-white rounded-2xl border border-slate-200 mb-4 p-4">
         <input value={filter} onChange={(e) => setFilter(e.target.value)}
@@ -35,7 +41,9 @@ export default function PaperHistory() {
           <div className="p-8 text-center text-slate-500">Loading…</div>
         ) : filtered.length === 0 ? (
           <div className="p-12 text-center text-slate-500">
-            {papers.length === 0 ? 'No papers generated yet.' : 'No papers match your filter.'}
+            {papers.length === 0
+              ? 'No papers generated yet. Go to Requests to generate one.'
+              : 'No papers match your filter.'}
           </div>
         ) : (
           <table className="w-full">
@@ -47,18 +55,34 @@ export default function PaperHistory() {
                 <th className="text-left px-6 py-3">Marks</th>
                 <th className="text-left px-6 py-3">Generated</th>
                 <th className="text-left px-6 py-3">Printed</th>
+                <th className="px-6 py-3"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
               {filtered.map((p) => (
-                <tr key={p.id} className="hover:bg-slate-50">
+                <tr key={p.id}
+                  onClick={() => navigate(`/admin/papers/${p.id}`)}
+                  className="hover:bg-slate-50 cursor-pointer">
                   <td className="px-6 py-3 font-mono text-xs text-slate-500">#{p.id}</td>
                   <td className="px-6 py-3 font-medium">{p.subject}</td>
                   <td className="px-6 py-3 text-slate-600">Class {p.class_level}</td>
                   <td className="px-6 py-3 text-slate-600">{p.total_marks}</td>
-                  <td className="px-6 py-3 text-slate-500 text-sm">{new Date(p.generated_at + 'Z').toLocaleString()}</td>
                   <td className="px-6 py-3 text-slate-500 text-sm">
-                    {p.printed_at ? new Date(p.printed_at + 'Z').toLocaleString() : <span className="text-slate-400">not yet</span>}
+                    {new Date(p.generated_at + 'Z').toLocaleString()}
+                  </td>
+                  <td className="px-6 py-3 text-sm">
+                    {p.printed_at ? (
+                      <span className="inline-block px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-medium">
+                        ✓ {new Date(p.printed_at + 'Z').toLocaleDateString()}
+                      </span>
+                    ) : (
+                      <span className="inline-block px-2 py-0.5 rounded-full bg-slate-50 text-slate-500 border border-slate-200 text-xs">
+                        not yet
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-6 py-3 text-right text-brand-600 text-sm font-medium">
+                    View →
                   </td>
                 </tr>
               ))}
