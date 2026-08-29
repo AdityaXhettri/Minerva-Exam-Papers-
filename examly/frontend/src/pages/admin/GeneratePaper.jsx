@@ -203,6 +203,8 @@ export default function GeneratePaper() {
     if (savedPaperId) {
       try { await api.post(`/papers/${savedPaperId}/printed`) } catch {}
     }
+    // Use a stripped (no-answer) version for the student PDF
+    const studentPaper = stripAnswers(paper)
     const doc = new jsPDF({ unit: 'pt', format: 'a4' })
     const margin = 40
     let y = margin
@@ -240,7 +242,7 @@ export default function GeneratePaper() {
       y += 8
     })
 
-    doc.save(`${paper.title.replace(/\s+/g, '_')}_paper.pdf`)
+    doc.save(`${studentPaper.title.replace(/\s+/g, '_')}_paper.pdf`)
   }
 
   if (loading) return <div className="p-8">Loading…</div>
@@ -359,18 +361,17 @@ export default function GeneratePaper() {
                                       checked={q.correct === o}
                                       onChange={() => updateCorrect(paper.sections.indexOf(sec), i, o)}
                                       className="shrink-0"
+                                      title="Mark as correct answer"
                                     />
                                     <input
                                       value={o}
                                       onChange={(e) => updateOption(paper.sections.indexOf(sec), i, j, e.target.value)}
                                       className="flex-1 px-2 py-1 rounded border border-slate-300 text-xs"
                                     />
+                                    {q.correct === o && <span className="text-emerald-600 font-bold text-xs">✓</span>}
                                   </>
                                 ) : (
-                                  <>
-                                    {q.correct === o && <span className="text-emerald-600 font-bold">✓</span>}
-                                    <span>{o}</span>
-                                  </>
+                                  <span>{o}</span>
                                 )}
                               </div>
                             ))}
