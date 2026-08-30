@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import api from '../../lib/api.js'
-import jsPDF from 'jspdf'
 
 export default function ViewPaper() {
   const { id } = useParams()
@@ -20,66 +19,49 @@ export default function ViewPaper() {
   }, [id])
 
   function handleDownloadPDF() {
-    if (!paper) return
-    const doc = new jsPDF({ unit: 'pt', format: 'a4' })
-    const margin = 40
-    let y = margin
-
-    doc.setFont('helvetica', 'bold').setFontSize(16)
-    doc.text(paper.paper.title || '', margin, y); y += 22
-    doc.setFont('helvetica', 'normal').setFontSize(11)
-    doc.text(paper.paper.subtitle || '', margin, y); y += 14
-    doc.text(`Total Marks: ${paper.paper.total_marks}`, margin, y); y += 14
-    doc.text(`Date: ${new Date().toLocaleDateString()}`, margin, y); y += 18
-
-    if (paper.paper.instructions) {
-      doc.setFont('helvetica', 'italic')
-      const instrLines = doc.splitTextToSize(paper.paper.instructions, 515)
-      doc.text(instrLines, margin, y); y += instrLines.length * 14 + 10
-    }
-
-    doc.setFont('helvetica', 'normal')
-    paper.paper.sections.forEach((sec) => {
-      if (y > 760) { doc.addPage(); y = margin }
-      doc.setFont('helvetica', 'bold').setFontSize(13)
-      doc.text(`Section ${sec.name} — ${sec.type_label}`, margin, y); y += 18
-      doc.setFont('helvetica', 'normal').setFontSize(10)
-      doc.text(`(${sec.questions.length} questions × ${sec.marks_per_question} marks each)`, margin, y); y += 16
-
-      sec.questions.forEach((q) => {
-        if (y > 780) { doc.addPage(); y = margin }
-        const lines = doc.splitTextToSize(`${q.number}. ${q.text}`, 515)
-        doc.text(lines, margin, y); y += lines.length * 12 + 4
-        if (q.options) {
-          q.options.forEach((o) => {
-            doc.text(`   ${o}`, margin + 12, y); y += 12
-          })
-        }
-        y += 4
-      })
-      y += 8
+    const layout = useHaryanaLayout ? 'haryana' : 'standard'
+    // Hit backend endpoint — it streams the PDF and marks paper as printed
+    const token = localStorage.getItem('examly_token')
+    fetch(`/api/papers/${id}/pdf?layout=${layout}`, {
+      headers: { Authorization: `Bearer ${token}` },
     })
-
-    // Append answer key on last page
-    if (paper.answer_key?.sections?.length > 0) {
-      doc.addPage(); y = margin
-      doc.setFont('helvetica', 'bold').setFontSize(16)
-      doc.text('Answer Key', margin, y); y += 22
-      doc.setFont('helvetica', 'normal').setFontSize(11)
-      paper.answer_key.sections.forEach((sec) => {
-        if (y > 780) { doc.addPage(); y = margin }
-        doc.setFont('helvetica', 'bold').setFontSize(12)
-        doc.text(`Section ${sec.name}`, margin, y); y += 16
-        doc.setFont('helvetica', 'normal').setFontSize(10)
-        sec.answers.forEach((a) => {
-          doc.text(`${a.number}: ${a.answer}`, margin, y); y += 12
-        })
-        y += 8
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.blob()
       })
-    }
+      .then((blob) => {
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `paper-${id}-${layout}.pdf`
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        URL.revokeObjectURL(url)
+      })
+      .catch((e) => alert(`PDF download failed: ${e.message}`))
+  }
 
-    doc.save(`${(paper.paper.title || 'paper').replace(/\s+/g, '_')}_paper.pdf`)
-    api.post(`/papers/${id}/printed`).catch(() => {})
+  function handleDownloadAnswerKey() {
+    const token = localStorage.getItem('examly_token')
+    fetch(`/api/papers/${id}/answer-key/pdf`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.blob()
+      })
+      .then((blob) => {
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `answer-key-paper-${id}.pdf`
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        URL.revokeObjectURL(url)
+      })
+      .catch((e) => alert(`Answer key download failed: ${e.message}`))
   }
 
   if (loading) return <div className="p-8">Loading…</div>
@@ -112,6 +94,10 @@ export default function ViewPaper() {
             <button onClick={handleDownloadPDF}
               className="px-5 py-2 rounded-lg bg-brand-500 text-white font-medium hover:bg-brand-600">
               ⬇ Download PDF
+            </button>
+            <button onClick={handleDownloadAnswerKey}
+              className="px-4 py-2 rounded-lg bg-emerald-500 text-white font-medium hover:bg-emerald-600">
+              🔑 Answer Key
             </button>
             <button onClick={() => setUseHaryanaLayout(!useHaryanaLayout)}
               className={`px-3 py-2 rounded-lg border text-sm font-medium ${useHaryanaLayout ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-slate-300 hover:bg-slate-50'}`}
