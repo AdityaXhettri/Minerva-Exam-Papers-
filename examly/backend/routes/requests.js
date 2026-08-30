@@ -4,27 +4,40 @@ import { requireAuth, requireRole } from '../middleware/auth.js'
 
 const router = express.Router()
 
-// Create a paper request (teacher)
-router.post('/', requireAuth, requireRole('teacher'), (req, res) => {
+// Create a paper request (teacher OR admin on behalf)
+router.post('/', requireAuth, (req, res) => {
+  if (!['teacher', 'admin'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Only teachers or admins can create paper requests' })
+  }
+
   const {
     class_level, subject, pdf_ids = [],
     total_marks, sections, difficulty,
     exam_date = null, instructions = null,
+    teacher_id = null,
   } = req.body || {}
 
   if (!class_level || !subject) return res.status(400).json({ error: 'class_level and subject required' })
   if (!Array.isArray(sections) || sections.length === 0) return res.status(400).json({ error: 'sections required' })
   if (!total_marks || total_marks < 1) return res.status(400).json({ error: 'total_marks required' })
 
-  // Validate that all pdf_ids are usable by this teacher (own + admin-uploaded)
+  // Determine which teacher this request is for
+  let ownerId = req.user.id
+  if (req.user.role === 'admin' && teacher_id) {
+    const t = db.prepare(`SELECT id FROM users WHERE id = ? AND role = 'teacher' AND active = 1`).get(teacher_id)
+    if (!t) return res.status(400).json({ error: 'Invalid teacher_id' })
+    ownerId = Number(teacher_id)
+  }
+
+  // Validate that all pdf_ids are usable (own + admin-uploaded, for any teacher)
   if (pdf_ids.length > 0) {
     const placeholders = pdf_ids.map(() => '?').join(',')
     const owned = db.prepare(
       `SELECT p.id FROM chapter_pdfs p JOIN users u ON p.teacher_id = u.id
        WHERE p.id IN (${placeholders}) AND (p.teacher_id = ? OR u.role = 'admin')`
-    ).all(...pdf_ids, req.user.id)
+    ).all(...pdf_ids, ownerId)
     if (owned.length !== pdf_ids.length) {
-      return res.status(403).json({ error: 'One or more PDFs are not available' })
+      return res.status(403).json({ error: 'One or more PDFs are not available to this teacher' })
     }
   }
 
@@ -33,7 +46,7 @@ router.post('/', requireAuth, requireRole('teacher'), (req, res) => {
      (teacher_id, class_level, subject, pdf_ids, total_marks, sections_json, difficulty_json, exam_date, instructions)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
-    req.user.id,
+    ownerId,
     class_level,
     subject,
     JSON.stringify(pdf_ids),
@@ -44,7 +57,12 @@ router.post('/', requireAuth, requireRole('teacher'), (req, res) => {
     instructions
   )
 
-  logAction(req.user.id, 'paper_request_created', { request_id: info.lastInsertRowid, subject, class_level })
+  logAction(req.user.id, 'paper_request_created', {
+    request_id: info.lastInsertRowid,
+    subject, class_level,
+    submitted_by_role: req.user.role,
+    for_teacher_id: ownerId,
+  })
 
   res.status(201).json({ id: info.lastInsertRowid })
 })

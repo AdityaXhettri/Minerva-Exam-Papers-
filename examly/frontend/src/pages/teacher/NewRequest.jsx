@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../../lib/api.js'
+import { useAuth } from '../../lib/useAuth.jsx'
 
 const SUBJECTS = ['Mathematics', 'English', 'Hindi', 'Science', 'Social Science', 'EVS', 'Sanskrit', 'Computer Science']
 const CLASSES = ['1','2','3','4','5','6','7','8','9','10','11','12']
@@ -15,6 +16,8 @@ const SECTION_TYPES = [
 
 export default function NewRequest() {
   const navigate = useNavigate()
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
   const [pdfs, setPdfs] = useState([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
@@ -36,7 +39,12 @@ export default function NewRequest() {
     api.get('/pdfs').then(({ data }) => {
       setPdfs(data.pdfs)
     }).catch(() => setError('Failed to load PDFs'))
-  }, [])
+    if (isAdmin) {
+      api.get('/teachers').then(({ data }) => {
+        setTeachers(data.teachers.filter((t) => t.active))
+      }).catch(() => {})
+    }
+  }, [isAdmin])
 
   // Filter PDFs by selected subject + class
   const filteredPdfs = pdfs.filter(
@@ -48,7 +56,32 @@ export default function NewRequest() {
   }
 
   function updateSection(i, key, value) {
-    setSections((prev) => prev.map((s, idx) => idx === i ? { ...s, [key]: value } : s))
+    setSections((prev) => prev.map((s, idx) => {
+      if (idx !== i) return s
+      // Strip leading zeros for numeric fields
+      const v = (key === 'marks_per_question' || key === 'question_count') && typeof value === 'string'
+        ? value.replace(/^0+(?=\d)/, '') || '0'
+        : value
+      return { ...s, [key]: v }
+    }))
+  }
+
+  function updateDifficulty(level, value) {
+    const v = Math.max(0, Math.min(100, Number(value) || 0))
+    // Auto-balance the other two fields so total stays at 100
+    const others = ['easy', 'medium', 'hard'].filter((l) => l !== level)
+    const remaining = Math.max(0, 100 - v)
+    const currentOtherSum = others.reduce((sum, l) => sum + (difficulty[l] || 0), 0)
+    let next = { ...difficulty, [level]: v }
+    if (currentOtherSum === 0) {
+      next[others[0]] = Math.floor(remaining / 2)
+      next[others[1]] = remaining - next[others[0]]
+    } else {
+      const aRatio = difficulty[others[0]] / currentOtherSum
+      next[others[0]] = Math.round(remaining * aRatio)
+      next[others[1]] = remaining - next[others[0]]
+    }
+    setDifficulty(next)
   }
 
   function addSection() {
@@ -110,6 +143,20 @@ export default function NewRequest() {
         {/* Basic info */}
         <div className="bg-white rounded-2xl border border-slate-200 p-6">
           <h2 className="text-lg font-semibold mb-4">Basic info</h2>
+          {isAdmin && (
+            <div className="mb-4 p-3 rounded-lg bg-brand-50 border border-brand-200">
+              <label className="text-sm font-medium text-brand-700 block mb-1">
+                Submitting on behalf of (admin mode)
+              </label>
+              <select value={submitForTeacherId} onChange={(e) => setSubmitForTeacherId(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white">
+                <option value="">— Self (will appear under your name) —</option>
+                {teachers.map((t) => (
+                  <option key={t.id} value={t.id}>{t.full_name || t.username} ({t.username})</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="text-sm font-medium block mb-1">Class</label>
@@ -226,7 +273,7 @@ export default function NewRequest() {
               <div key={d}>
                 <label className="text-sm font-medium capitalize block mb-1">{d} %</label>
                 <input type="number" min="0" max="100" value={difficulty[d]}
-                  onChange={(e) => setDifficulty({ ...difficulty, [d]: Number(e.target.value) })}
+                  onChange={(e) => updateDifficulty(d, e.target.value)}
                   className="w-full px-3 py-2 rounded-lg border border-slate-300" />
               </div>
             ))}
