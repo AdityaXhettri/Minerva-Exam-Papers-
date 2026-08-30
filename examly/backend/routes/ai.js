@@ -3,6 +3,27 @@ import { db, logAction } from '../db.js'
 import { requireAuth, requireRole } from '../middleware/auth.js'
 import { generateQuestions, activeProvider } from '../services/ai.js'
 
+// Retry helper for rate-limited AI calls (Groq 429 / 5xx)
+async function withRetry(fn, { attempts = 4, baseDelayMs = 15000 } = {}) {
+  let lastErr
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn()
+    } catch (err) {
+      lastErr = err
+      const msg = String(err.message || '')
+      const is429 = msg.includes('429') || msg.includes('Rate limit') || msg.includes('Too Many Requests')
+      const is5xx = msg.startsWith('OpenAI-compatible error 5')
+      if (!is429 && !is5xx) throw err
+      if (i === attempts - 1) throw err
+      const delay = baseDelayMs * (i + 1)
+      console.warn(`AI rate-limited. Retrying in ${delay / 1000}s (attempt ${i + 1}/${attempts})…`)
+      await new Promise((r) => setTimeout(r, delay))
+    }
+  }
+  throw lastErr
+}
+
 const router = express.Router()
 
 // Get which AI provider is configured
@@ -48,7 +69,7 @@ router.post('/generate', requireAuth, requireRole('admin'), async (req, res) => 
       chaptersText = chaptersText.slice(0, MAX_CHARS) + '\n\n[...chapter content truncated for length...]'
     }
 
-    const paper = await generateQuestions({
+    const paper = await withRetry(() => generateQuestions({
       provider,
       chaptersText,
       request: {
@@ -59,7 +80,7 @@ router.post('/generate', requireAuth, requireRole('admin'), async (req, res) => 
         difficulty,
         instructions: reqRow.instructions,
       },
-    })
+    }))
 
     logAction(req.user.id, 'ai_paper_generated', {
       request_id,

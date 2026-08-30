@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import api from '../../lib/api.js'
 import jsPDF from 'jspdf'
+import { generateHaryanaPaperPDF } from '../../lib/haryanaLayout.js'
 
 const TYPE_LABEL = {
   mcq: 'Multiple Choice Questions',
@@ -19,10 +20,12 @@ export default function GeneratePaper() {
   const [pdfs, setPdfs] = useState([])
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
+  const [generatingMsg, setGeneratingMsg] = useState('')
   const [paper, setPaper] = useState(null)
   const [answerKey, setAnswerKey] = useState(null)
   const [savedPaperId, setSavedPaperId] = useState(null)
   const [editing, setEditing] = useState(false)
+  const [useHaryanaLayout, setUseHaryanaLayout] = useState(true)
   const [error, setError] = useState('')
   const [aiProvider, setAiProvider] = useState(null)
 
@@ -98,6 +101,7 @@ export default function GeneratePaper() {
   async function handleGenerate() {
     setGenerating(true)
     setError('')
+    setError('Generating paper… (this may take 30-60 seconds)')
     try {
       let generated
       let ak
@@ -129,6 +133,7 @@ export default function GeneratePaper() {
       setError(err.response?.data?.error || err.message)
     } finally {
       setGenerating(false)
+      setGeneratingMsg('')
     }
   }
 
@@ -204,8 +209,13 @@ export default function GeneratePaper() {
     if (savedPaperId) {
       try { await api.post(`/papers/${savedPaperId}/printed`) } catch {}
     }
-    // Use a stripped (no-answer) version for the student PDF
     const studentPaper = stripAnswers(paper)
+
+    if (useHaryanaLayout) {
+      generateHaryanaPaperPDF({ paper: studentPaper, answerKey })
+      return
+    }
+
     const doc = new jsPDF({ unit: 'pt', format: 'a4' })
     const margin = 40
     let y = margin
@@ -278,6 +288,11 @@ export default function GeneratePaper() {
             )}
             {paper && (
               <>
+                <button onClick={() => setUseHaryanaLayout(!useHaryanaLayout)}
+                  className={`px-3 py-2 rounded-lg border text-sm font-medium ${useHaryanaLayout ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-slate-300 hover:bg-slate-50'}`}
+                  title="Toggle Haryana Board format (A4 landscape, 4 quadrants, foldable)">
+                  {useHaryanaLayout ? '📄 Haryana' : '📄 A4'}
+                </button>
                 <button onClick={() => setEditing(!editing)}
                   className={`px-4 py-2 rounded-lg border text-sm font-medium ${editing ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-slate-300 hover:bg-slate-50'}`}>
                   {editing ? '✓ Done editing' : '✏️ Edit questions'}
@@ -312,6 +327,12 @@ export default function GeneratePaper() {
       </div>
 
       {error && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-4">{error}</div>}
+      {generatingMsg && !error && (
+        <div className="text-sm text-brand-700 bg-brand-50 border border-brand-200 rounded-lg px-3 py-2 mb-4 flex items-center gap-2">
+          <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" opacity="0.25" /><path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="4" fill="none" /></svg>
+          {generatingMsg}
+        </div>
+      )}
 
       {/* Paper preview */}
       {paper && (
