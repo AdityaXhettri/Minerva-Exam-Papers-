@@ -97,19 +97,30 @@ router.get('/:id/pdf', requireAuth, requireRole('admin'), async (req, res) => {
     if (layout === 'haryana') {
       // Build booklet input
       const sections = paper.sections || []
-      // Strip correct answers from sections for student version
+      // Strip correct answers from sections for student version.
+      // Options from DB are strings like "(a) Quadratic equations" — pass through unchanged.
       const cleanSections = sections.map((sec) => ({
         label: sec.label || sec.name,
+        name: sec.name,
         type: sec.type,
-        questions: (sec.questions || []).map((q) => ({
-          text: q.text,
-          marks: q.marks,
-          options: q.options ? q.options.map((o) => ({ letter: o.letter, text: o.text })) : undefined,
+        type_label: sec.type_label || sec.type,
+        marks_per_question: sec.marks_per_question,
+        questions: (sec.questions || []).map((q) => {
+          const clean = { text: q.text, marks: q.marks }
+          if (q.options && q.options.length) {
+            // Accept either {letter,text} objects OR plain strings — always normalize to string
+            clean.options = q.options.map((o) =>
+              typeof o === 'string' ? o : `(${o.letter}) ${o.text}`
+            )
+          }
           // omit 'correct' intentionally
-        })),
+          return clean
+        }),
       }))
 
       buf = buildHaryanaBooklet({
+        title: paper.title || `${row.subject || ''} — Class ${row.class_level || ''}`,
+        subtitle: paper.subtitle || 'Examination Paper',
         sections: cleanSections,
         totalMarks: row.total_marks,
         examDate: row.exam_date || '',
