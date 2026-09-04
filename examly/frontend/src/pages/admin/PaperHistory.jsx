@@ -29,7 +29,8 @@ export default function PaperHistory() {
     setDeleting(true)
     try {
       await api.delete(`/papers/${deleteTarget.id}`)
-      setPapers((prev) => prev.filter((p) => p.id !== deleteTarget.id))
+      // Re-fetch from server to ensure list is fully in sync (removes any cached row + cascading effects)
+      await load()
       setDeleteTarget(null)
     } catch (e) {
       alert(`Delete failed: ${e.response?.data?.error || e.message}`)

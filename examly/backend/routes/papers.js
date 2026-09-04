@@ -81,11 +81,16 @@ router.get('/:id', requireAuth, (req, res) => {
 
 // Delete paper (admin only)
 router.delete('/:id', requireAuth, requireRole('admin'), (req, res) => {
-  const row = db.prepare(`SELECT id FROM papers WHERE id = ?`).get(req.params.id)
+  const row = db.prepare(`SELECT id, request_id FROM papers WHERE id = ?`).get(req.params.id)
   if (!row) return res.status(404).json({ error: 'Paper not found' })
 
   db.prepare(`DELETE FROM papers WHERE id = ?`).run(req.params.id)
-  logAction(req.user.id, 'paper_deleted', { paper_id: req.params.id })
+  // Revert request status to 'pending' so teacher sees it as not-yet-generated
+  // (or 'rejected' which better signals it was once generated then deleted)
+  if (row.request_id) {
+    db.prepare(`UPDATE paper_requests SET status = 'pending' WHERE id = ?`).run(row.request_id)
+  }
+  logAction(req.user.id, 'paper_deleted', { paper_id: req.params.id, request_id: row.request_id })
   res.json({ ok: true })
 })
 

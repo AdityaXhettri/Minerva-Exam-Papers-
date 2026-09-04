@@ -105,6 +105,16 @@ router.get('/:id', requireAuth, (req, res) => {
 })
 
 // Update status (admin only)
+router.delete('/:id', requireAuth, requireRole('admin'), (req, res) => {
+  const row = db.prepare(`SELECT id FROM paper_requests WHERE id = ?`).get(req.params.id)
+  if (!row) return res.status(404).json({ error: 'Request not found' })
+  // Delete associated papers first (FK cascade)
+  db.prepare(`DELETE FROM papers WHERE request_id = ?`).run(req.params.id)
+  db.prepare(`DELETE FROM paper_requests WHERE id = ?`).run(req.params.id)
+  logAction(req.user.id, 'request_deleted', { request_id: req.params.id })
+  res.json({ ok: true })
+})
+
 router.patch('/:id/status', requireAuth, requireRole('admin'), (req, res) => {
   const { status } = req.body || {}
   if (!['pending', 'generated', 'rejected'].includes(status)) {
