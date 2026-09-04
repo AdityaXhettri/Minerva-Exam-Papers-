@@ -115,14 +115,11 @@ router.post('/test-batch', requireAuth, requireRole('admin'), async (req, res) =
     }
 
     if (String(req.query.pdf || '') === '1') {
-      const targetIndex = Math.max(1, Math.min(pdfBuffers.length, Number(req.query.index) || 1))
-      const target = pdfBuffers.find((p) => p.index === targetIndex)
-      if (target) {
-        res.setHeader('Content-Type', 'application/pdf')
-        res.setHeader('Content-Disposition', `attachment; filename="accountancy-test-paper-${targetIndex}.pdf"`)
-        return res.send(target.buf)
-      }
-      return res.status(404).json({ error: 'paper not found' })
+      const p = pdfBuffers[0]
+      if (!p) return res.status(503).json({ error: 'no papers generated yet' })
+      res.setHeader('Content-Type', 'application/pdf')
+      res.setHeader('Content-Disposition', `attachment; filename="accountancy-test-paper-${p.index}.pdf"`)
+      return res.send(p.buf)
     }
 
     res.json({

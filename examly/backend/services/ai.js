@@ -3,7 +3,21 @@
 
 const SYSTEM_PROMPT = `You are an expert exam paper setter for Indian schools (CBSE/State board).
 You generate exam questions strictly based on the chapter content provided.
-You ALWAYS return valid JSON matching the schema requested. No prose, no markdown.`
+You ALWAYS return valid JSON matching the schema requested. No prose, no markdown.
+
+=== STRICT TEXT FORMATTING RULES (CRITICAL — DO NOT VIOLATE) ===
+1. NEVER insert extra spaces inside words or around colons in numeric/ratio expressions.
+   Correct:   "ratio 2:1", "shared 3:2", "Rs.5,00,000", "12% p.a."
+   Wrong:     "r a t i o  2 : 1", "R s . 5 , 0 0 , 0 0 0", "5 0 , 0 0 0"
+2. Write ratios exactly as "a:b" with NO spaces around the colon (only one space before/after the whole ratio).
+3. Write currency as "Rs.<amount>" with no spaces between "Rs." and the digits, and no spaces between digits and commas (e.g. Rs.5,00,000 — NOT "Rs. 5,00,000" or "Rs. 5 , 00 , 000").
+4. Write percentages as "12%" not "1 2 %" and rates as "12% p.a." not "1 2 %   p . a .".
+5. Write dates / durations compactly: "31st March 2024", "1/4 share", "5 years", not spaced-out.
+6. Self-check: after writing each question, mentally re-read it. If you see any single letters separated by single spaces inside what should be one word or number, REMOVE those spaces before output.
+7. Do NOT split sentences by inserting vertical whitespace between every word. Only break lines between separate questions or separate options.
+
+These formatting rules apply to ALL fields: title, instructions, question text, options, correct answer text, type labels, and chapter labels.
+`
 
 // Subjects where questions MUST include numerical/computational elements (figures, amounts, rates, dates, etc.)
 const NUMERICAL_SUBJECTS = new Set([
@@ -171,6 +185,142 @@ async function callGemini({ apiKey, prompt }) {
   return data.candidates[0].content.parts[0].text
 }
 
+// Belt-and-braces sanitizer for AI output. Targets only numeric/ratio/currency contexts.
+// General-purpose prose like "I am a student" or "to be or not to be" is intentionally
+// left untouched — only tokens that obviously belong to a numeric/ratio expression
+// get re-glued. Telemetry counter is exposed via getSanitizerStats() for observability.
+
+const SANITIZER_STATS = { runs: 0, hits: 0 }
+
+export function getSanitizerStats() {
+  return { ...SANITIZER_STATS }
+}
+
+const NUMERIC_FRAGMENT_RE = /(\d+)\s+(\d+(?:,\d+)*)(?!\s*:)/g
+
+function sanitizeNumericTokens(s) {
+  if (typeof s !== 'string' || !s) return s
+  let changed = false
+  const out = s.replace(NUMERIC_FRAGMENT_RE, (m, a, b) => {
+    changed = true
+    return a + b
+  })
+  return changed ? out : s
+}
+
+function looksLikeRatioFragment(s) {
+  return /(?:ratio|share|shared|sharing|in the ratio|share profit|profit.*ratio)/i.test(s)
+}
+
+const RS_PREFIX_RE = /R\s+s\s*\.\s*(\d[\d ,]*)/gi
+const NUMBER_GAP_RE = /(\d)\s+(\d)/g
+
+// Conservative sanitizer: only targets tokens that obviously belong to numeric/currency/ratio
+// expressions. General English prose is left untouched. Triggered only when the input shows
+// at least one of these signals: spaced-out "R s .", spaced digits, or 5+ single-letter tokens
+// in a row inside a single field.
+function looksLikeNumericSpace(s) {
+  return /R\s+s\s*\./i.test(s)
+    || /(?:\d\s+\d)/.test(s)
+    || /\$\s*\d/.test(s)
+    || /(?:\b[A-Za-z]\s+){5,}[A-Za-z]\b/.test(s)
+}
+
+function sanitizeRatioContext(s) {
+  if (typeof s !== 'string' || !s || !looksLikeNumericSpace(s)) return s
+  let changed = false
+  let out = s
+
+  const next1 = out.replace(RS_PREFIX_RE, (m) => {
+    changed = true
+    const inner = m.replace(/R\s*s\s*\.\s*/i, '').replace(/\s+/g, '')
+    return 'Rs.' + inner
+  })
+  if (next1 !== out) out = next1
+
+  const next1b = out.replace(/(Rs\.\d[\d,]*)([A-Za-z])/, (m, rs, next) => {
+    changed = true
+    return rs + ' ' + next
+  })
+  if (next1b !== out) out = next1b
+
+  const next2 = out.replace(NUMBER_GAP_RE, (m, a, b) => {
+    changed = true
+    return a + b
+  })
+  if (next2 !== out) out = next2
+
+  const next2b = out.replace(/(\d)\s+([:.,])/g, (m, d, p) => {
+    changed = true
+    return d + p
+  })
+  if (next2b !== out) out = next2b
+
+  const next2c = out.replace(/([:.,])\s+(\d)/g, (m, p, d) => {
+    changed = true
+    return p + d
+  })
+  if (next2c !== out) out = next2c
+
+  // Collapse 5+ single-letter tokens back-to-back, leaving words alone.
+  const runRe = /([A-Za-z])(?:\s+([A-Za-z])){5,}/g
+  let prevOut
+  let passes = 0
+  do {
+    prevOut = out
+    out = out.replace(runRe, (m) => {
+      changed = true
+      return m.replace(/\s+/g, '')
+    })
+    passes += 1
+  } while (out !== prevOut && passes < 6)
+
+  return changed ? out : s
+}
+
+export function sanitizeText(s) {
+  if (typeof s !== 'string' || !s) return s
+  let out = s
+  let changed = false
+  const a = sanitizeNumericTokens(out)
+  if (a !== out) { out = a; changed = true }
+  const b = sanitizeRatioContext(out)
+  if (b !== out) { out = b; changed = true }
+  if (changed) {
+    SANITIZER_STATS.hits += 1
+  }
+  return out
+}
+
+function sanitizeQuestion(q) {
+  if (!q || typeof q !== 'object') return q
+  if (typeof q.text === 'string') q.text = sanitizeText(q.text)
+  if (typeof q.correct === 'string') q.correct = sanitizeText(q.correct)
+  if (Array.isArray(q.options)) {
+    q.options = q.options.map((o) => (typeof o === 'string' ? sanitizeText(o) : o))
+  }
+  return q
+}
+
+function sanitizePaperForRendering(paper) {
+  if (!paper || typeof paper !== 'object') return paper
+  SANITIZER_STATS.runs += 1
+  if (typeof paper.title === 'string') paper.title = sanitizeText(paper.title)
+  if (typeof paper.subtitle === 'string') paper.subtitle = sanitizeText(paper.subtitle)
+  if (typeof paper.instructions === 'string') paper.instructions = sanitizeText(paper.instructions)
+  if (Array.isArray(paper.sections)) {
+    for (const section of paper.sections) {
+      if (typeof section.name === 'string') section.name = sanitizeText(section.name)
+      if (typeof section.type === 'string') section.type = sanitizeText(section.type)
+      if (typeof section.type_label === 'string') section.type_label = sanitizeText(section.type_label)
+      if (Array.isArray(section.questions)) {
+        for (const question of section.questions) sanitizeQuestion(question)
+      }
+    }
+  }
+  return paper
+}
+
 export async function generateQuestions({ provider, chaptersText, chapterLabels = [], extraRules = '', request }) {
   const prompt = buildPrompt({ ...request, chaptersText, chapterLabels, extraRules })
   let raw
@@ -198,7 +348,7 @@ export async function generateQuestions({ provider, chaptersText, chapterLabels 
     if (!m) throw new Error('AI returned non-JSON output')
     parsed = JSON.parse(m[0])
   }
-  return parsed
+  return sanitizePaperForRendering(parsed)
 }
 
 export function activeProvider() {

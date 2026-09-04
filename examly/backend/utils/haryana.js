@@ -57,52 +57,96 @@ function safeWrap(doc, text, maxW) {
   // Replace ₹ with "Rs." for both measurement and display
   const measureText = text.replace(/₹/g, 'Rs.')
 
-  const lines = []
-  let remaining = measureText
-
-  while (remaining.length > 0) {
-    const rawLines = doc.splitTextToSize(remaining, safeMaxW)
-    if (rawLines.length === 0) break
-
-    let line = rawLines[0]
-    let actualW = doc.getTextWidth(line)
-
-    if (actualW <= safeMaxW) {
-      lines.push(line)
-      remaining = remaining.slice(line.length).trim()
-      continue
-    }
-
-    // Binary search longest prefix that fits
-    let lo = 0, hi = line.length
-    while (lo < hi) {
-      const mid = Math.ceil((lo + hi) / 2)
-      if (doc.getTextWidth(line.slice(0, mid)) <= safeMaxW) lo = mid
-      else hi = mid - 1
-    }
-
-    let truncated = line.slice(0, lo)
-    const lastSpace = truncated.lastIndexOf(' ')
-    if (lastSpace > truncated.length * 0.4) {
-      truncated = truncated.slice(0, lastSpace)
-    }
-
-    lines.push(truncated)
-    remaining = remaining.slice(truncated.length).trim()
-  }
-
-  return lines.length > 0 ? lines : ['']
+  // Use manualWrap instead of splitTextToSize — jsPDF's splitTextToSize can
+  // produce character-by-character spaced output when text contains runs of
+  // multiple spaces, which is exactly the visual artifact we saw in answer-keys.
+  return manualWrap(measureText, safeMaxW, (s) => doc.getTextWidth(s))
 }
 
 // ============================================================
 // LAYOUT A QUESTION — returns { height, render }
 // Computes exact height first (for pagination), then renders at given y.
 // ============================================================
+// MONOSPACE TABLE RENDERER
+// Detects lines starting with a pipe-character separated structure (e.g.
+// "Particulars | Debit (Rs.) | Credit (Rs.)") and renders the whole question
+// in 'courier' so columns line up. Other questions fall back to normal layout.
+// ============================================================
+function looksLikeTableText(text) {
+  if (!text || typeof text !== 'string') return false
+  const lines = text.split('\n')
+  let pipeLines = 0
+  for (const l of lines) {
+    if (l.includes('|') && l.split('|').length >= 3) pipeLines += 1
+  }
+  return pipeLines >= 2 // header + at least one row
+}
+
+// Manual wrap respecting whitespace — used in NOTE sections / answer keys.
+// Returns wrapped lines that fit within maxW.
+//
+// Tokenization uses `replace(/\s+/g, ' ')` to collapse runs of whitespace,
+// then splits on single space. This guarantees consistent output regardless
+// of how many consecutive spaces the input contained.
+//
+// For monospace fonts (Courier 9pt at A4 width), we additionally enforce a
+// strict character count cap to avoid jsPDF getTextWidth() under-estimates
+// producing character-spread output near the right margin.
+function manualWrap(text, maxW, getWidth, charCap = null) {
+  const result = []
+  for (const paragraph of text.split('\n')) {
+    if (paragraph === '') {
+      result.push('')
+      continue
+    }
+    const tokens = paragraph.replace(/\s+/g, ' ').split(' ')
+    let current = ''
+    for (const tok of tokens) {
+      const candidate = current ? `${current} ${tok}` : tok
+      const candidateW = getWidth(candidate)
+      const tooWideWidth = current !== '' && candidateW > maxW
+      const tooWideChars = charCap !== null && candidate.length > charCap
+      if (current === '' || (!tooWideWidth && !tooWideChars)) {
+        current = candidate
+      } else {
+        result.push(current)
+        current = tok
+      }
+    }
+    if (current) result.push(current)
+  }
+  return result
+}
+
+function renderTableText(doc, text, x, y, contentW, lineH) {
+  const lines = text.split('\n')
+  doc.setFont('courier', 'normal')
+  const monoSize = 9
+  doc.setFontSize(monoSize)
+  doc.setTextColor(0, 0, 0)
+  let cursorY = y
+  for (const ln of lines) {
+    if (ln === '') { cursorY += lineH * 0.78; continue }
+    // A4 9pt Courier = ~95 chars per line at contentW ≈ 170mm; cap at 92 for safety.
+    const wrapped = manualWrap(ln, contentW - 0.5, (s) => doc.getTextWidth(s), 92)
+    for (const w of wrapped) {
+      doc.text(w, x, cursorY, { baseline: 'top' })
+      cursorY += lineH * 0.78
+    }
+  }
+  doc.setFont('helvetica', 'normal')
+  doc.setTextColor(0, 0, 0)
+  return cursorY
+}
+
+// ============================================================
 function layoutQuestion(doc, item, opts, contentW) {
   const { qTextSize, optionSize, lineH, qGap } = opts
 
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(qTextSize)
+  const isTable = looksLikeTableText(item.text)
+
+  doc.setFont(isTable ? 'courier' : 'helvetica', 'normal')
+  doc.setFontSize(isTable ? 9 : qTextSize)
 
   const headStr = `Q${item.qNum}.`
   const numW = doc.getTextWidth(headStr + ' ')
@@ -147,18 +191,24 @@ function layoutQuestion(doc, item, opts, contentW) {
   return {
     height: h,
     render: (doc, y) => {
-      doc.setFont('helvetica', 'normal')
-      doc.setFontSize(qTextSize)
-      doc.setTextColor(25, 25, 40)
+      doc.setFont(isTable ? 'courier' : 'helvetica', 'normal')
+      doc.setFontSize(isTable ? 9 : qTextSize)
+      doc.setTextColor(0, 0, 0)
       doc.text(headStr, opts.marginX, y)
-      // Render question text lines
-      doc.text(textLines, opts.marginX + numW, y)
-      let cursorY = y + textLines.length * lineH
+      let cursorY
+      if (isTable) {
+        // Table-style question — render every line (including non-pipe lines) in monospace
+        cursorY = renderTableText(doc, item.text, opts.marginX + numW, y, textMaxW, lineH)
+      } else {
+        // Standard wrapped text
+        doc.text(textLines, opts.marginX + numW, y)
+        cursorY = y + textLines.length * lineH
+      }
 
       // Render options — 2 columns
       if (optLayout) {
         doc.setFontSize(optionSize)
-        doc.setTextColor(35, 35, 50)
+        doc.setTextColor(0, 0, 0)
         const optIndent = 4
         const optGap = 4
         const optColW = (contentW - optIndent - optGap) / 2
@@ -179,6 +229,7 @@ function layoutQuestion(doc, item, opts, contentW) {
         cursorY = rowY
       }
 
+      doc.setFont('helvetica', 'normal')
       doc.setTextColor(0, 0, 0)
       return cursorY + qGap
     },
@@ -197,17 +248,17 @@ function renderPass(paper, items, opts) {
   // ---- Paper header ----
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(opts.titleSize)
-  doc.setTextColor(20, 20, 35)
+  doc.setTextColor(0, 0, 0)
   doc.text(paper.title || '', cx, opts.marginTop, { align: 'center' })
   let y = opts.marginTop + opts.titleSize * 0.42
 
   doc.setFontSize(opts.subtitleSize)
-  doc.setTextColor(60, 60, 75)
+  doc.setTextColor(0, 0, 0)
   doc.text(paper.subtitle || '', cx, y, { align: 'center' })
   y += opts.subtitleSize * 0.55
 
   doc.setFontSize(opts.marksSize)
-  doc.setTextColor(40, 40, 55)
+  doc.setTextColor(0, 0, 0)
   doc.text(`Total Marks: ${paper.totalMarks || '____'}`, cx - 28, y, { align: 'center' })
   doc.text(`Date: ${paper.examDate || '__________'}`, cx + 28, y, { align: 'center' })
   y += opts.marksSize * 0.6
@@ -215,17 +266,16 @@ function renderPass(paper, items, opts) {
   if (paper.instructions) {
     doc.setFont('helvetica', 'italic')
     doc.setFontSize(opts.sectionSubSize)
-    doc.setTextColor(80, 80, 95)
+    doc.setTextColor(0, 0, 0)
     const lines = safeWrap(doc, paper.instructions, contentW)
     doc.text(lines, cx, y, { align: 'center' })
     y += lines.length * opts.sectionSubSize * 0.5
   }
 
   y += 2
-  doc.setDrawColor(220, 220, 230)
+  doc.setDrawColor(0, 0, 0)
   doc.setLineWidth(0.2)
   doc.line(opts.marginX, y, PAGE_W - opts.marginX, y)
-  doc.setDrawColor(0, 0, 0)
   y += 5
   doc.setTextColor(0, 0, 0)
 
@@ -254,11 +304,11 @@ function renderPass(paper, items, opts) {
       if (isNewSection || !currentSection || currentSection !== item.section.label) {
         doc.setFont('helvetica', 'normal')
         doc.setFontSize(opts.sectionSize)
-        doc.setTextColor(40, 40, 55)
+        doc.setTextColor(0, 0, 0)
         doc.text(item.section.label, opts.marginX, y)
         y += opts.sectionSize * 0.45
         doc.setFontSize(opts.sectionSubSize)
-        doc.setTextColor(80, 80, 95)
+        doc.setTextColor(0, 0, 0)
         doc.text(item.section.subLine, opts.marginX, y)
         y += opts.sectionSubSize * 0.55
         doc.setTextColor(0, 0, 0)
