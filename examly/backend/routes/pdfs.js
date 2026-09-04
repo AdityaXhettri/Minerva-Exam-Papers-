@@ -22,7 +22,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
   fileFilter: (req, file, cb) => {
     if (file.mimetype === 'application/pdf') cb(null, true)
     else cb(new Error('Only PDF files allowed'))
@@ -56,15 +56,8 @@ router.post('/', requireAuth, upload.single('file'), async (req, res) => {
       }
     }
 
-    // Extract text
-    let extracted = ''
-    try {
-      const data = await pdfParse(req.file.path)
-      extracted = data.text || ''
-    } catch (e) {
-      console.warn('PDF text extraction failed:', e.message)
-    }
-
+    // Insert row immediately with extracted_text = '' so the upload responds fast.
+    // Text extraction happens in the background to avoid proxy/timeout failures on large PDFs.
     const info = db.prepare(
       `INSERT INTO chapter_pdfs (teacher_id, subject, class_level, chapter_label, original_filename, stored_filename, extracted_text)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
@@ -75,7 +68,7 @@ router.post('/', requireAuth, upload.single('file'), async (req, res) => {
       chapter_label,
       req.file.originalname,
       req.file.filename,
-      extracted.slice(0, 200000)
+      ''
     )
 
     logAction(req.user.id, 'pdf_uploaded', {
@@ -83,18 +76,32 @@ router.post('/', requireAuth, upload.single('file'), async (req, res) => {
       subject, class_level, chapter_label,
       uploaded_by_role: req.user.role,
       owner_id: ownerId,
-      chars_extracted: extracted.length,
+      file_bytes: req.file.size,
     })
 
+    // Respond fast — client should not wait for text extraction on multi-MB PDFs.
     res.status(201).json({
       id: info.lastInsertRowid,
       subject,
       class_level,
       chapter_label,
       original_filename: req.file.originalname,
-      extracted_chars: extracted.length,
+      extracted_chars: 0,
+      extraction_status: 'pending',
       uploaded_at: new Date().toISOString(),
     })
+
+    // Background extraction (non-blocking)
+    ;(async () => {
+      try {
+        const data = await pdfParse(req.file.path)
+        const text = (data.text || '').slice(0, 200000)
+        db.prepare(`UPDATE chapter_pdfs SET extracted_text = ? WHERE id = ?`).run(text, info.lastInsertRowid)
+        console.log(`[pdf-extract] pdf_id=${info.lastInsertRowid} chars=${text.length} done`)
+      } catch (e) {
+        console.warn(`[pdf-extract] pdf_id=${info.lastInsertRowid} failed:`, e.message)
+      }
+    })()
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: err.message })

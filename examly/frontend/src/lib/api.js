@@ -3,6 +3,9 @@ import axios from 'axios'
 const api = axios.create({
   baseURL: '/api',
   headers: { 'Content-Type': 'application/json' },
+  timeout: 180000, // 3 min — big PDF uploads + extraction need headroom
+  maxContentLength: Infinity,
+  maxBodyLength: Infinity,
 })
 
 api.interceptors.request.use((config) => {
