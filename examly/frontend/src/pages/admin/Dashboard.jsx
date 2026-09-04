@@ -81,17 +81,17 @@ export default function AdminDashboard() {
           Create, generate, and manage paper requests — all from one place.
         </p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
-          <Link to="/teacher/requests/new" className="bg-white rounded-xl border border-brand-200 p-4 hover:border-brand-400 transition">
+          <Link to="/admin/new-request" className="bg-white rounded-xl border border-brand-200 p-4 hover:border-brand-400 transition">
             <div className="text-xs text-brand-700 font-semibold uppercase">Action 1</div>
             <div className="font-semibold mt-1">+ New Paper Request</div>
             <div className="text-xs text-slate-500 mt-1">Submit a new paper for any class & subject</div>
           </Link>
-          <Link to="/teacher/requests" className="bg-white rounded-xl border border-brand-200 p-4 hover:border-brand-400 transition">
+          <Link to="/admin/my-requests" className="bg-white rounded-xl border border-brand-200 p-4 hover:border-brand-400 transition">
             <div className="text-xs text-brand-700 font-semibold uppercase">Action 2</div>
             <div className="font-semibold mt-1">Generate from existing</div>
             <div className="text-xs text-slate-500 mt-1">Pick a pending request and generate the PDF</div>
           </Link>
-          <Link to="/teacher/pdfs" className="bg-white rounded-xl border border-brand-200 p-4 hover:border-brand-400 transition">
+          <Link to="/admin/pdfs" className="bg-white rounded-xl border border-brand-200 p-4 hover:border-brand-400 transition">
             <div className="text-xs text-brand-700 font-semibold uppercase">Action 3</div>
             <div className="font-semibold mt-1">Upload chapter PDFs</div>
             <div className="text-xs text-slate-500 mt-1">Add reference material for better AI generation</div>

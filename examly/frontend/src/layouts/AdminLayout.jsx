@@ -12,9 +12,11 @@ export default function AdminLayout() {
 
   const navItems = [
     { to: '/admin', label: 'Dashboard', end: true },
-    { to: '/admin/requests', label: 'Requests' },
-    { to: '/admin/library', label: 'Chapter Library' },
+    { to: '/admin/new-request', label: 'New Paper Request' },
+    { to: '/admin/my-requests', label: 'My Requests' },
+    { to: '/admin/requests', label: 'All Requests' },
     { to: '/admin/papers', label: 'Paper History' },
+    { to: '/admin/pdfs', label: 'Chapter PDFs' },
     { to: '/admin/teachers', label: 'Teachers' },
   ]
 

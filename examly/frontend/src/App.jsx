@@ -47,6 +47,9 @@ function AppRoutes() {
         <Route path="papers/:id" element={<ViewPaper />} />
         <Route path="teachers" element={<TeacherManagement />} />
         <Route path="library" element={<ChapterLibrary />} />
+        <Route path="new-request" element={<NewRequest />} />
+        <Route path="my-requests" element={<MyRequests />} />
+        <Route path="pdfs" element={<TeacherPDFs />} />
       </Route>
 
       <Route
