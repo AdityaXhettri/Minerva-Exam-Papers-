@@ -120,7 +120,8 @@ Rules:
 - Distribute difficulty across the requested mix (Easy/Medium/Hard percentages)
 - Question text should reference the chapter content; do not invent facts outside the chapter
 - Numbers MUST be sequential within each section: A.1, A.2, ... B.1, B.2, ...
-- Total marks across all questions MUST equal ${totalMarks}${numericalRule}${socialScienceRule}${chapterDistRule}${contentTypeRules}${extraRules}}
+- Total marks across all questions MUST equal ${totalMarks}${numericalRule}${socialScienceRule}${chapterDistRule}${contentTypeRules}${extraRules}
+`
 }
 
 async function callOpenAI({ apiKey, prompt, baseURL = 'https://api.openai.com/v1', model = null }) {
@@ -132,7 +133,7 @@ async function callOpenAI({ apiKey, prompt, baseURL = 'https://api.openai.com/v1
     ],
     response_format: { type: 'json_object' },
     temperature: 0.7,
-    max_tokens: 6000,
+    max_tokens: Number(process.env.AI_MAX_OUTPUT_TOKENS) || 6000,
   }
 
   const res = await fetch(`${baseURL}/chat/completions`, {
@@ -170,8 +171,8 @@ async function callGemini({ apiKey, prompt }) {
   return data.candidates[0].content.parts[0].text
 }
 
-export async function generateQuestions({ provider, chaptersText, request }) {
-  const prompt = buildPrompt({ ...request, chaptersText })
+export async function generateQuestions({ provider, chaptersText, chapterLabels = [], extraRules = '', request }) {
+  const prompt = buildPrompt({ ...request, chaptersText, chapterLabels, extraRules })
   let raw
   if (provider === 'openai') {
     raw = await callOpenAI({ apiKey: process.env.OPENAI_API_KEY, prompt })
