@@ -57,6 +57,38 @@ export default function AdminDashboard() {
         ))}
       </div>
 
+      {/* Teacher Portal quick access */}
+      <div className="bg-gradient-to-br from-emerald-50 to-brand-50 rounded-2xl border border-emerald-200 p-6 mb-8">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Teacher Portal — Self-Service</h2>
+            <p className="text-sm text-slate-600 mt-1">
+              Create paper requests, generate them instantly, and download PDFs — all without going through a teacher.
+            </p>
+          </div>
+          <Link
+            to="/teacher"
+            className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition"
+          >
+            Open Teacher Portal →
+          </Link>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
+          <Link to="/teacher/requests/new" className="bg-white rounded-xl border border-emerald-200 p-4 hover:border-emerald-400 transition">
+            <div className="text-xs text-emerald-700 font-semibold uppercase">Action 1</div>
+            <div className="font-semibold mt-1">+ New Paper Request</div>
+          </Link>
+          <Link to="/teacher/requests" className="bg-white rounded-xl border border-emerald-200 p-4 hover:border-emerald-400 transition">
+            <div className="text-xs text-emerald-700 font-semibold uppercase">Action 2</div>
+            <div className="font-semibold mt-1">Generate from existing</div>
+          </Link>
+          <Link to="/teacher/pdfs" className="bg-white rounded-xl border border-emerald-200 p-4 hover:border-emerald-400 transition">
+            <div className="text-xs text-emerald-700 font-semibold uppercase">Action 3</div>
+            <div className="font-semibold mt-1">Upload chapter PDFs</div>
+          </Link>
+        </div>
+      </div>
+
       {/* Recent requests */}
       <div className="bg-white rounded-2xl border border-slate-200">
         <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">

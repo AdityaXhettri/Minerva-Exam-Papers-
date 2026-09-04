@@ -19,6 +19,8 @@ export default function NewRequest() {
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
   const [pdfs, setPdfs] = useState([])
+  const [teachers, setTeachers] = useState([])
+  const [submitForTeacherId, setSubmitForTeacherId] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
@@ -125,6 +127,7 @@ export default function NewRequest() {
         difficulty,
         exam_date: examDate || null,
         instructions: instructions || null,
+        teacher_id: isAdmin && submitForTeacherId ? Number(submitForTeacherId) : undefined,
       })
       navigate('/teacher/requests')
     } catch (err) {

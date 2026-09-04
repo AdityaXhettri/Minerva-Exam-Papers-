@@ -16,12 +16,13 @@ import TeacherPDFs from './pages/teacher/PDFs.jsx'
 import NewRequest from './pages/teacher/NewRequest.jsx'
 import MyRequests from './pages/teacher/MyRequests.jsx'
 
-function Protected({ role, children }) {
+function Protected({ role, roles, children }) {
   const { user, loading } = useAuth()
   const location = useLocation()
   if (loading) return <div className="p-8">Loading…</div>
   if (!user) return <Navigate to="/login" replace state={{ from: location }} />
-  if (user.role !== role) return <Navigate to="/" replace />
+  const allowed = roles ? roles.includes(user.role) : user.role === role
+  if (!allowed) return <Navigate to="/" replace />
   return children
 }
 
@@ -51,7 +52,7 @@ function AppRoutes() {
       <Route
         path="/teacher"
         element={
-          <Protected role="teacher">
+          <Protected roles={['teacher', 'admin']}>
             <TeacherLayout />
           </Protected>
         }

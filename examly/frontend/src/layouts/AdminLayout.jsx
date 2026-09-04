@@ -18,6 +18,12 @@ export default function AdminLayout() {
     { to: '/admin/teachers', label: 'Teachers' },
   ]
 
+  const teacherActions = [
+    { to: '/teacher/requests/new', label: 'New Request' },
+    { to: '/teacher/requests', label: 'My Requests' },
+    { to: '/teacher/pdfs', label: 'My PDFs' },
+  ]
+
   return (
     <div className="min-h-screen flex bg-slate-50">
       <aside className="w-64 bg-white border-r border-slate-200 flex flex-col">
@@ -25,7 +31,7 @@ export default function AdminLayout() {
           <div className="w-8 h-8 rounded-lg bg-brand-500 flex items-center justify-center text-white font-bold">E</div>
           <span className="text-lg font-semibold">Examly</span>
         </div>
-        <nav className="flex-1 p-3 space-y-1">
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {navItems.map((it) => (
             <NavLink
               key={it.to}
@@ -35,6 +41,24 @@ export default function AdminLayout() {
                 `block px-3 py-2 rounded-lg text-sm font-medium transition ${
                   isActive
                     ? 'bg-brand-50 text-brand-700'
+                    : 'text-slate-600 hover:bg-slate-100'
+                }`
+              }
+            >
+              {it.label}
+            </NavLink>
+          ))}
+          <div className="pt-4 pb-1 px-3 text-[10px] uppercase tracking-wider text-slate-400 font-semibold">
+            Teacher Portal
+          </div>
+          {teacherActions.map((it) => (
+            <NavLink
+              key={it.to}
+              to={it.to}
+              className={({ isActive }) =>
+                `block px-3 py-2 rounded-lg text-sm font-medium transition ${
+                  isActive
+                    ? 'bg-emerald-50 text-emerald-700'
                     : 'text-slate-600 hover:bg-slate-100'
                 }`
               }
