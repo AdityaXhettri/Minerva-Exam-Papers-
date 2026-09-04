@@ -243,28 +243,97 @@ function drawAnswerKeyPage(doc, paper, answerKey) {
   let y = mmToPt(30)
   doc.setFontSize(10)
 
-  answerKey.sections.forEach((sec) => {
-    if (y > mmToPt(PAGE_H - 15)) {
+  // Column geometry: 2-column layout (number+answer).
+  // Each row uses the height of the TALLER column entry so they stay aligned.
+  const PAGE_BOTTOM = mmToPt(PAGE_H - 10)
+  const COL1_X = mmToPt(10)
+  const COL2_X = mmToPt(155)
+  const NUM_W = mmToPt(14)
+  const ANSWER_W = mmToPt(120)
+  const LINE_H = mmToPt(5.2)
+  const SECTION_GAP = mmToPt(4)
+  const PARA_INDENT = mmToPt(3)
+
+  // Helper: how many lines does this answer take, given the drawable width?
+  function linesFor(text) {
+    const t = String(text || '')
+    const arr = doc.splitTextToSize(t, ANSWER_W - NUM_W)
+    return Math.max(1, arr.length)
+  }
+
+  // Page-break helper
+  function ensureSpace(neededH) {
+    if (y + neededH > PAGE_BOTTOM) {
       doc.addPage('a4', 'landscape')
       y = mmToPt(15)
     }
-    doc.setFont('helvetica', 'bold')
-    doc.text(`Section ${sec.name}`, mmToPt(10), y)
-    y += 6
-    doc.setFont('helvetica', 'normal')
+  }
 
-    // Two columns
+  answerKey.sections.forEach((sec) => {
+    const isOptionSection = sec.qtype === 'mcq' || sec.qtype === 'mcq_ar' || sec.qtype === 'truefalse'
     const half = Math.ceil(sec.answers.length / 2)
     const col1 = sec.answers.slice(0, half)
     const col2 = sec.answers.slice(half)
 
-    col1.forEach((a, i) => {
-      doc.text(`${a.number}: ${a.answer}`, mmToPt(12), y)
-      if (col2[i]) {
-        doc.text(`${col2[i].number}: ${col2[i].answer}`, mmToPt(80), y)
+    // Pre-compute every answer's wrapped line count so we can plan pagination correctly.
+    const c1Lines = col1.map((a) => linesFor(a.answer))
+    const c2Lines = col2.map((a) => linesFor(a.answer))
+
+    // Render Section header (with page-break check)
+    const headerH = LINE_H + mmToPt(2)
+    ensureSpace(headerH)
+    doc.setFont('helvetica', 'bold')
+    doc.text(`Section ${sec.name}`, mmToPt(10), y)
+    y += LINE_H + mmToPt(1)
+    doc.setFont('helvetica', 'normal')
+
+    // Render row-by-row, advancing y by max(lines_left, lines_right) per row.
+    for (let i = 0; i < half; i++) {
+      const a1 = col1[i]
+      const a2 = col2[i]
+      const ln1 = c1Lines[i] || 0
+      const ln2 = c2Lines[i] || 0
+      // Each descriptive answer gets one extra blank line as examiner note space.
+      // MCQ/A&R do not — keep them compact.
+      const pad1 = (a1 && !isOptionSection) ? 1 : 0
+      const pad2 = (a2 && !isOptionSection) ? 1 : 0
+      const h1 = (ln1 + pad1) * LINE_H
+      const h2 = (ln2 + pad2) * LINE_H
+      const rowH = Math.max(h1, h2, isOptionSection ? LINE_H : 2 * LINE_H)
+
+      // Page-break BEFORE drawing the row if it won't fit
+      ensureSpace(rowH + mmToPt(1))
+
+      const rowTopY = y
+
+      // Draw column 1
+      if (a1) {
+        doc.setFont('helvetica', 'bold')
+        doc.text(`${a1.number}:`, COL1_X, rowTopY)
+        doc.setFont('helvetica', 'normal')
+        const wrapped = doc.splitTextToSize(String(a1.answer || ''), ANSWER_W - NUM_W)
+        doc.text(wrapped[0] || '', COL1_X + NUM_W, rowTopY)
+        for (let li = 1; li < wrapped.length; li++) {
+          doc.text(wrapped[li], COL1_X + NUM_W + PARA_INDENT, rowTopY + li * LINE_H)
+        }
       }
-      y += 5
-    })
-    y += 4
+
+      // Draw column 2
+      if (a2) {
+        doc.setFont('helvetica', 'bold')
+        doc.text(`${a2.number}:`, COL2_X, rowTopY)
+        doc.setFont('helvetica', 'normal')
+        const wrapped = doc.splitTextToSize(String(a2.answer || ''), ANSWER_W - NUM_W)
+        doc.text(wrapped[0] || '', COL2_X + NUM_W, rowTopY)
+        for (let li = 1; li < wrapped.length; li++) {
+          doc.text(wrapped[li], COL2_X + NUM_W + PARA_INDENT, rowTopY + li * LINE_H)
+        }
+      }
+
+      // Advance by the row height (so both columns stay aligned on the same horizontal band)
+      y = rowTopY + rowH
+    }
+
+    y += SECTION_GAP
   })
 }

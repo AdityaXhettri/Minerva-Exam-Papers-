@@ -34,11 +34,18 @@ function packSections(sections) {
 function friendlyType(t) {
   switch ((t || '').toLowerCase()) {
     case 'mcq': return 'Multiple Choice Questions'
+    case 'mcq_ar': return 'Assertion-Reason MCQs'
     case 'vshort': return 'Very Short Answer'
     case 'short': return 'Short Answer'
     case 'long': return 'Long Answer'
     case 'fill': return 'Fill in the Blanks'
     case 'truefalse': return 'True / False'
+    case 'passage': return 'Reading Comprehension'
+    case 'grammar': return 'Grammar'
+    case 'writing': return 'Writing'
+    case 'reading': return 'Reading'
+    case 'case_study': return 'Case Study / Source-based'
+    case 'map_work': return 'Map Work'
     default: return ''
   }
 }

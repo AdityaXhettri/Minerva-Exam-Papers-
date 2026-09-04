@@ -6,11 +6,18 @@ import { generateHaryanaPaperPDF } from '../../lib/haryanaLayout.js'
 
 const TYPE_LABEL = {
   mcq: 'Multiple Choice Questions',
+  mcq_ar: 'Assertion-Reason MCQs',
   vshort: 'Very Short Answer Questions',
   short: 'Short Answer Questions',
   long: 'Long Answer Questions',
   fill: 'Fill in the Blanks',
   truefalse: 'True / False',
+  passage: 'Reading Comprehension',
+  grammar: 'Grammar',
+  writing: 'Writing',
+  reading: 'Reading',
+  case_study: 'Case Study / Source-based',
+  map_work: 'Map Work',
 }
 
 export default function GeneratePaper() {
@@ -54,32 +61,39 @@ export default function GeneratePaper() {
 
   // Placeholder AI generator (real one plugged in Phase 7)
   function generatePaperLocally() {
-    const sections = request.sections.map((s, sIdx) => ({
-      name: s.name,
-      type: s.type,
-      type_label: TYPE_LABEL[s.type] || s.type,
-      marks_per_question: s.marks_per_question,
-      questions: Array.from({ length: s.question_count }).map((_, qIdx) => {
-        const qNum = qIdx + 1
-        const diff = pickDifficulty(request.difficulty, qIdx, s.question_count)
-        if (s.type === 'mcq') {
+    const sections = request.sections.map((s, sIdx) => {
+      const qType = s.contentType || s.type
+      return ({
+        name: s.name,
+        type: qType,
+        type_label: TYPE_LABEL[qType] || qType,
+        marks_per_question: s.marks_per_question,
+        questions: Array.from({ length: s.question_count }).map((_, qIdx) => {
+          const qNum = qIdx + 1
+          const diff = pickDifficulty(request.difficulty, qIdx, s.question_count)
+          // MCQ-style section (plain MCQ, A&R, or True/False) → 4 options
+          if (qType === 'mcq' || qType === 'mcq_ar' || qType === 'truefalse') {
+            const opts = qType === 'truefalse'
+              ? ['(a) True', '(b) False']
+              : ['(a) Option A', '(b) Option B', '(c) Option C', '(d) Option D']
+            return {
+              number: `${s.name}.${qNum}`,
+              text: `[${diff.toUpperCase()}] ${TYPE_LABEL[qType]} ${qNum} from ${request.subject} Class ${request.class_level} — based on chapter content.`,
+              options: opts,
+              correct: opts[0],
+              marks: s.marks_per_question,
+              difficulty: diff,
+            }
+          }
           return {
             number: `${s.name}.${qNum}`,
-            text: `[${diff.toUpperCase()}] MCQ ${qNum} from ${request.subject} Class ${request.class_level} — based on chapter content.`,
-            options: ['(a) Option A', '(b) Option B', '(c) Option C', '(d) Option D'],
-            correct: '(a) Option A',
+            text: `[${diff.toUpperCase()}] ${TYPE_LABEL[qType]} ${qNum} — question derived from uploaded chapter content.`,
             marks: s.marks_per_question,
             difficulty: diff,
           }
-        }
-        return {
-          number: `${s.name}.${qNum}`,
-          text: `[${diff.toUpperCase()}] ${TYPE_LABEL[s.type]} ${qNum} — question derived from uploaded chapter content.`,
-          marks: s.marks_per_question,
-          difficulty: diff,
-        }
-      }),
-    }))
+        }),
+      })
+    })
 
     return {
       title: `${request.subject} — Class ${request.class_level}`,
@@ -105,15 +119,27 @@ export default function GeneratePaper() {
     try {
       let generated
       let ak
+      // Build answer-key entry from a question based on its section type.
+      // MCQ/A&R/TrueFalse → just the option letter from q.correct
+      // Descriptive → q.answer (model answer / explanation)
+      function answerFor(q, qType) {
+        const isOptionSection = qType === 'mcq' || qType === 'mcq_ar' || qType === 'truefalse'
+        if (isOptionSection) {
+          // q.correct is already normalized by the backend to "(a)" / "(A)"
+          return q.correct || '[Answer required]'
+        }
+        return q.answer || '[Answer required]'
+      }
       if (aiProvider) {
         // Real AI generation
         const { data } = await api.post('/ai/generate', { request_id: Number(id) })
         generated = data.paper
         ak = { sections: (generated.sections || []).map((s) => ({
           name: s.name,
+          qtype: s.type || s.contentType,
           answers: (s.questions || []).map((q) => ({
             number: q.number,
-            answer: q.correct || '[Answer required]',
+            answer: answerFor(q, s.type || s.contentType),
           })),
         })) }
       } else {
@@ -121,9 +147,10 @@ export default function GeneratePaper() {
         generated = generatePaperLocally()
         ak = { sections: generated.sections.map((s) => ({
           name: s.name,
+          qtype: s.type,
           answers: s.questions.map((q) => ({
             number: q.number,
-            answer: q.correct || `[Answer for ${q.number}]`,
+            answer: answerFor(q, s.type),
           })),
         })) }
       }
@@ -316,7 +343,7 @@ export default function GeneratePaper() {
           <div className="flex flex-wrap gap-2">
             {request.sections.map((s, i) => (
               <span key={i} className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 text-xs">
-                Section {s.name}: {s.question_count} × {s.marks_per_question}m ({TYPE_LABEL[s.type]})
+                Section {s.name}: {s.question_count} × {s.marks_per_question}m ({TYPE_LABEL[s.contentType || s.type]})
               </span>
             ))}
           </div>

@@ -32,7 +32,7 @@ function buildPrompt({ subject, classLevel, totalMarks, sections, difficulty, in
   const sectionPlan = sections.map((s) => {
     const ct = s.contentType || s.type
     const diff = s.difficulty || difficulty
-    return `Section ${s.name}: ${s.question_count} questions of type "${s.type}" (content: "${ct}"), each worth ${s.marks_per_question} marks | difficulty mix: Easy ${diff.easy}%, Medium ${diff.medium}%, Hard ${diff.hard}%`
+    return `Section ${s.name}: ${s.question_count} questions of type "${ct}" (CONTENT TYPE — this is what you MUST use, NOT "${s.type}"), each worth ${s.marks_per_question} marks | difficulty mix: Easy ${diff.easy}%, Medium ${diff.medium}%, Hard ${diff.hard}%`
   }).join('\n')
 
   const diffPlan = `Difficulty mix — Easy: ${difficulty.easy}%, Medium: ${difficulty.medium}%, Hard: ${difficulty.hard}%`
@@ -68,7 +68,19 @@ function buildPrompt({ subject, classLevel, totalMarks, sections, difficulty, in
     const m = s.marks_per_question
     switch (ct) {
       case 'mcq_ar':
-        return `\n- Section ${s.name} (MCQ + Assertion-Reason): ${s.question_count} questions. About 75% standard MCQs and 25% Assertion-Reason pairs. For A&R: each item has Assertion (A) and Reason (R), with 4 options: (a) Both A & R true, R is correct explanation of A; (b) Both A & R true but R is not correct explanation; (c) A is true, R is false; (d) A is false, R is true.`
+        return `\n- Section ${s.name} (Assertion-Reason MCQs): ${s.question_count} questions of EXACTLY this Assertion-Reason format:
+
+  Format each A&R item in the question "text" field as:
+  "On the basis of given Statements : Assertion (A) & Reason (R), choose the correct option :
+   Assertion (A) : <assertion statement>.
+   Reason    (R) : <reason statement>.
+   Options :
+   (A) Both Assertion (A) and Reason (R) are true and Reason (R) is the correct explanation of Assertion (A).
+   (B) Both Assertion (A) and Reason (R) are true, but Reason (R) is not the correct explanation of Assertion (A).
+   (C) Assertion (A) is true, but Reason (R) is false.
+   (D) Assertion (A) is false, but Reason (R) is true."
+
+  Use this format for ALL ${s.question_count} questions in this section (NOT a mix of plain MCQ and A&R — ALL are A&R). Each question's "correct" field should be one of "(A)", "(B)", "(C)", or "(D)". ${s.marks_per_question > 1 ? `Since each question is worth ${s.marks_per_question} marks, also append a "Explanation:" line below the options giving the correct answer and a brief reason why (1-2 lines).` : ''}`
       case 'passage':
         return `\n- Section ${s.name} (Passage / Reading Comprehension): ${s.question_count} passages. Each passage should be 150-250 words on a relevant topic, followed by 4-5 sub-questions (mix of MCQ and short answer). Use sub-question numbering like "A.1(i)", "A.1(ii)" inside a single question's "text" field, separated by newlines.`
       case 'grammar':
@@ -93,6 +105,16 @@ ${diffPlan}
 
 ${sectionPlan}
 
+CRITICAL SECTION RULES (must follow exactly):
+- Each section's "type" in the JSON output MUST match the CONTENT TYPE listed above (NOT the legacy "Type" field).
+- Sections with type "mcq": plain MCQs only. NO Assertion-Reason questions, no A/R statements. Provide exactly 4 options (a-d) per question. The "correct" field MUST be only the letter token "(a)", "(b)", "(c)", or "(d)" — never include the option text after it.
+- Sections with type "mcq_ar": ALL questions must be in Assertion-Reason format (use the exact template in the per-section rules below). NO plain MCQs. Every question has an (A) and (R) statement with the 4 standard options (A)/(B)/(C)/(D). The "correct" field MUST be only "(A)", "(B)", "(C)", or "(D)".
+- Sections with type "vshort" / "short" / "long": NO options, NO Assertion-Reason, NO MCQs. Open-ended descriptive or numerical answers only. You MUST fill the "answer" field for every question with a 1-3 line model answer / explanation that captures the key points (definitions, formulas, journal entries, reasoning, final answer with units, etc.). Keep it concise — just enough for an examiner to mark from.
+- Sections with type "case_study": a passage/scenario with sub-questions inside one question's "text" field. Each question must have an "answer" field with the sub-question answers / explanations.
+- Sections with type "passage" / "writing" / "grammar" / "map_work" / "fill" / "truefalse": follow the special rules below.
+- DO NOT mix question styles across sections. Each section is a single question style only.
+- "marks_per_question" inside each section MUST be exactly what is specified above. Do not vary it across questions.
+
 ${instructions ? `Special instructions: ${instructions}\n` : ''}
 
 === CHAPTER CONTENT (use ONLY this to generate questions) ===
@@ -116,7 +138,8 @@ Return JSON in EXACTLY this shape:
           "number": "A.1",
           "text": "<question text or passage stem>",
           "options": ["(a) ...", "(b) ...", "(c) ...", "(d) ..."],
-          "correct": "(a) ...",
+          "correct": "(a)",
+          "answer": "<ONLY for non-MCQ sections: 1-3 line model answer / explanation>",
           "marks": <int>,
           "difficulty": "easy|medium|hard",
           "chapter": "<source chapter label>"
@@ -127,10 +150,11 @@ Return JSON in EXACTLY this shape:
 }
 
 Rules:
-- Include "options" and "correct" only when type is "mcq" or "truefalse"
-- For "truefalse", options are ["(a) True", "(b) False"]
-- For "vshort", ask 1-3 word answers (definitions, terms, one-line answers). NO options.
-- "correct" must match one of the options exactly
+- Include "options" array and "correct" field only when section type is "mcq", "mcq_ar", or "truefalse". For all other section types, OMIT both fields.
+- For MCQ/A&R: "correct" MUST be only the letter token, e.g. "(a)" or "(A)". DO NOT include option text after the letter.
+- For "truefalse", options are ["(a) True", "(b) False"], correct is "(a)" or "(b)".
+- For all OTHER section types (vshort, short, long, case_study, passage, writing, grammar, map_work, fill): include an "answer" field with a 1-3 line model answer / explanation. OMIT "correct".
+- "correct" (when present) must match one of the options exactly as the letter token.
 - Distribute difficulty across the requested mix (Easy/Medium/Hard percentages)
 - Question text should reference the chapter content; do not invent facts outside the chapter
 - Numbers MUST be sequential within each section: A.1, A.2, ... B.1, B.2, ...
@@ -321,6 +345,111 @@ function sanitizePaperForRendering(paper) {
   return paper
 }
 
+// =============================================================
+// SECTION ENFORCEMENT
+// =============================================================
+// AI sometimes drifts from the requested section layout — e.g. putting MCQs
+// in a "short" section, or stuffing Assertion-Reason into a 1-mark VShort
+// section. This function post-processes the AI output to strictly honour the
+// teacher's section configuration:
+//   - Forces each section's `type`/`type_label` from `contentType`
+//   - Strips `options`/`correct` from questions in non-MCQ sections
+//   - Renumbers questions sequentially within each section
+//   - Truncates to requested question_count
+//   - Repairs marks_per_question to match the section's marks
+// =============================================================
+const TYPE_LABELS = {
+  mcq:        'Multiple Choice Questions',
+  mcq_ar:     'Assertion-Reason MCQs',
+  passage:    'Reading Comprehension',
+  grammar:    'Grammar',
+  writing:    'Writing',
+  case_study: 'Case Study / Source-based',
+  map_work:   'Map Work',
+  vshort:     'Very Short Answer',
+  short:      'Short Answer',
+  long:       'Long Answer',
+  fill:       'Fill in the Blanks',
+  truefalse:  'True / False',
+  reading:    'Reading',
+}
+
+function looksLikeAssertionReason(q) {
+  const t = String(q?.text || '').toLowerCase()
+  return /\bassertion\b/.test(t) && /\breason\b/.test(t)
+        || /\ba\.?\s*[:\-]?\s*\(?r\)?/i.test(t)
+        || /\(a\)\s*both\s+a\s*&\s*r\s*true/i.test(q?.options?.join(' ') || '')
+}
+
+function enforceSectionLayout(sections, requestedSections) {
+  if (!Array.isArray(sections) || !Array.isArray(requestedSections)) return sections
+  // Map requested sections by name for quick lookup
+  const reqByName = new Map(requestedSections.map((r) => [String(r.name).toUpperCase(), r]))
+
+  return sections.map((sec) => {
+    const req = reqByName.get(String(sec.name || '').toUpperCase())
+    if (!req) return sec
+    const ct = String(req.contentType || req.type || 'mcq').toLowerCase()
+
+    // Force the section's type/contentType — the renderer relies on this.
+    sec.type = ct
+    sec.contentType = ct
+    sec.type_label = TYPE_LABELS[ct] || ct.toUpperCase()
+    sec.marks_per_question = Number(req.marks_per_question) || sec.marks_per_question
+
+    // Determine whether this section should have MCQ-style options.
+    const isOptionSection = ct === 'mcq' || ct === 'mcq_ar' || ct === 'truefalse' || ct === 'passage'
+
+    let questions = Array.isArray(sec.questions) ? sec.questions : []
+    // Truncate / pad to requested count
+    questions = questions.slice(0, Number(req.question_count) || questions.length)
+
+    // Strip options/correct from non-option sections.
+    // Also strip from individual questions that look like A&R if section is plain mcq.
+    const wantPlainMcq = ct === 'mcq'
+    questions = questions.map((q) => {
+      if (!q || typeof q !== 'object') return q
+      const q2 = { ...q }
+
+      if (!isOptionSection) {
+        // Descriptive sections: keep `answer` field, drop options/correct.
+        delete q2.options
+        delete q2.correct
+        if (typeof q2.answer !== 'string' || !q2.answer.trim()) {
+          q2.answer = '[Answer to be provided]'
+        }
+      } else if (wantPlainMcq && looksLikeAssertionReason(q)) {
+        // Plain MCQ section: drop A&R questions — they belong in mcq_ar.
+        delete q2.options
+        delete q2.correct
+        delete q2.answer
+      } else {
+        // MCQ / A&R / T-F: normalize `correct` to letter-only token like "(a)" or "(A)".
+        // A&R sections use uppercase letters (A/B/C/D), plain MCQ uses lowercase (a/b/c/d).
+        const letterCase = (ct === 'mcq_ar') ? 'upper' : 'lower'
+        if (typeof q2.correct === 'string') {
+          const m = q2.correct.match(/^\s*\(?([A-Za-z])\)?/)
+          if (m) {
+            const ch = letterCase === 'upper' ? m[1].toUpperCase() : m[1].toLowerCase()
+            q2.correct = `(${ch})`
+          } else {
+            q2.correct = '[Answer required]'
+          }
+        } else {
+          q2.correct = '[Answer required]'
+        }
+        delete q2.answer
+      }
+      q2.marks = sec.marks_per_question
+      return q2
+    })
+
+    // If the AI put nothing here, leave it empty rather than hallucinate.
+    sec.questions = questions
+    return sec
+  })
+}
+
 export async function generateQuestions({ provider, chaptersText, chapterLabels = [], extraRules = '', request }) {
   const prompt = buildPrompt({ ...request, chaptersText, chapterLabels, extraRules })
   let raw
@@ -348,7 +477,13 @@ export async function generateQuestions({ provider, chaptersText, chapterLabels 
     if (!m) throw new Error('AI returned non-JSON output')
     parsed = JSON.parse(m[0])
   }
-  return sanitizePaperForRendering(parsed)
+  sanitizePaperForRendering(parsed)
+  // Enforce the requested section layout: strip MCQ options from non-MCQ sections,
+  // force section type to user's contentType, truncate to requested count, fix marks.
+  if (Array.isArray(parsed.sections) && Array.isArray(request?.sections)) {
+    parsed.sections = enforceSectionLayout(parsed.sections, request.sections)
+  }
+  return parsed
 }
 
 export function activeProvider() {

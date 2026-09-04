@@ -171,6 +171,9 @@ router.get('/:id/pdf', requireAuth, requireRole('admin'), async (req, res) => {
 })
 
 // Download answer key PDF (admin only)
+// Supports both:
+//   - paper_json (has questions with `correct` for MCQ + `answer` for descriptive)
+//   - answer_key_json (legacy or new format with sections[].answers[] OR sections[].questions[])
 router.get('/:id/answer-key/pdf', requireAuth, requireRole('admin'), async (req, res) => {
   const row = db.prepare(
     `SELECT p.*, r.exam_date, r.class_level, r.subject
@@ -183,20 +186,58 @@ router.get('/:id/answer-key/pdf', requireAuth, requireRole('admin'), async (req,
   const paper = JSON.parse(row.paper_json || '{}')
   const ak = row.answer_key_json ? JSON.parse(row.answer_key_json) : null
 
+  // Normalize an option-letter token from a freeform "correct" string.
+  // Accepts "(a)", "a", "(A) Both A & R true...", etc. Returns "(a)" / "(A)" / null.
+  function letterToken(raw, wantUpper) {
+    if (typeof raw !== 'string') return null
+    const m = raw.match(/^\s*\(?([A-Za-z])\)?/)
+    if (!m) return null
+    const ch = wantUpper ? m[1].toUpperCase() : m[1].toLowerCase()
+    return `(${ch})`
+  }
+
+  // Build a lookup: question number ("A.1", "B.2") -> answer object from answer_key
+  const akByNumber = {}
+  if (ak && Array.isArray(ak.sections)) {
+    for (const sec of ak.sections) {
+      // New format: sections[].questions[].answer (and optionally .number)
+      if (Array.isArray(sec.questions)) {
+        for (let i = 0; i < sec.questions.length; i++) {
+          const q = sec.questions[i]
+          const num = q.number || `${sec.name || ''}.${i + 1}`
+          akByNumber[num] = q
+        }
+      }
+      // Legacy format: sections[].answers[].answer (no section name in number)
+      if (Array.isArray(sec.answers)) {
+        for (let i = 0; i < sec.answers.length; i++) {
+          const a = sec.answers[i]
+          // Legacy uses sequential numbering, build a per-section number like "A.1"
+          const num = a.number && /\./.test(a.number) ? a.number : `${sec.name || ''}.${i + 1}`
+          // Only set if not already populated by new format
+          if (!akByNumber[num]) {
+            akByNumber[num] = { number: num, answer: a.answer }
+          }
+        }
+      }
+    }
+  }
+
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   const PW = 210
   const PH = 297
-  const M = 20
+  const M = 18
   const contentW = PW - 2 * M
   const contentBottom = PH - M
 
   let y = M
   // Title
-  doc.setFont('helvetica', 'normal')
+  doc.setFont('helvetica', 'bold')
   doc.setFontSize(16)
   doc.setTextColor(20, 20, 35)
   doc.text('ANSWER KEY', PW / 2, y, { align: 'center' })
   y += 8
+  doc.setFont('helvetica', 'normal')
   doc.setFontSize(11)
   doc.setTextColor(60, 60, 75)
   doc.text(`${row.subject || ''} — Class ${row.class_level || ''}`, PW / 2, y, { align: 'center' })
@@ -213,78 +254,75 @@ router.get('/:id/answer-key/pdf', requireAuth, requireRole('admin'), async (req,
   y += 6
   doc.setTextColor(0, 0, 0)
 
-  // Build a lookup of answer_key data by question number
-  const akByNum = {}
-  if (ak && ak.sections) {
-    let akQ = 1
-    for (const sec of ak.sections) {
-      for (const q of sec.questions || []) {
-        akByNum[akQ] = q
-        akQ++
-      }
-    }
-  }
-
-  let qNum = 1
+  // Walk sections and emit header + answer rows
+  let qIdx = 1
   for (const sec of paper.sections || []) {
-    // Section header
-    if (y + 14 > contentBottom) {
-      doc.addPage()
-      y = M
-    }
-    doc.setFont('helvetica', 'normal')
+    const secName = sec.name || (sec.label ? String(sec.label).split(' ').pop() : 'Section')
+    const secType = (sec.type || sec.contentType || 'mcq').toLowerCase()
+    const isOptionSection = secType === 'mcq' || secType === 'mcq_ar' || secType === 'truefalse'
+
+    // Section header (with page-break if needed)
+    if (y + 14 > contentBottom) { doc.addPage(); y = M }
+    doc.setFont('helvetica', 'bold')
     doc.setFontSize(12)
     doc.setTextColor(40, 40, 55)
-    doc.text(sec.label || sec.name || 'Section', M, y)
+    doc.text(sec.label || `Section ${secName}`, M, y)
     y += 5
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(9.5)
     doc.setTextColor(80, 80, 95)
-    const subLine = `${sec.questions?.length || 0} × ${sec.marks_per_question || 0} = ${(sec.questions?.length || 0) * (sec.marks_per_question || 0)} marks`
-    doc.text(subLine, M, y)
+    const secTotal = (sec.questions?.length || 0) * (sec.marks_per_question || 0)
+    doc.text(`${sec.questions?.length || 0} × ${sec.marks_per_question || 0} = ${secTotal} marks`, M, y)
     y += 6
     doc.setTextColor(0, 0, 0)
 
     doc.setFontSize(10)
-    for (const q of sec.questions || []) {
-      // Get answer info from answer_key (if available) — fallback to paper's own correct
-      const akQ = akByNum[qNum] || {}
-      const correct = akQ.correct || q.correct
-      const explanation = akQ.explanation || akQ.modelAnswer || q.modelAnswer || null
+    for (let i = 0; i < (sec.questions || []).length; i++) {
+      const q = sec.questions[i]
+      const qNumber = q.number || `${secName}.${i + 1}`
+      // Look up the answer from answer_key first, then fall back to paper_json's own fields
+      const akQ = akByNumber[qNumber] || {}
+      const rawCorrect = akQ.correct ?? q.correct ?? null
+      const rawAnswer  = akQ.answer  ?? q.answer  ?? null
 
-      // Build answer block lines
-      const answerBlock = []
-      answerBlock.push(`Q${qNum}.`)
-      if (correct) {
-        answerBlock.push(`   Answer: ${correct}`)
+      // MCQ/A&R/T-F: only the option letter. Otherwise: descriptive answer text.
+      let display = null
+      if (isOptionSection) {
+        const wantUpper = secType === 'mcq_ar'
+        display = letterToken(rawCorrect, wantUpper) || (rawCorrect ? String(rawCorrect) : null)
+      } else {
+        display = rawAnswer ? String(rawAnswer).trim() : null
       }
-      if (explanation) {
-        // Split explanation into step-by-step lines (if multi-line)
-        const steps = String(explanation).split(/\n+/).map(s => s.trim()).filter(Boolean)
-        if (steps.length > 1) {
-          answerBlock.push('   Solution:')
-          steps.forEach((s, i) => {
-            answerBlock.push(`     ${i + 1}. ${s}`)
-          })
-        } else {
-          answerBlock.push(`   Explanation: ${explanation}`)
-        }
-      }
-      const blockText = answerBlock.join('\n')
-      const blockLines = safeWrap(doc, blockText, contentW)
-      const blockH = blockLines.length * 4.5 + 4
-
-      if (y + blockH > contentBottom) {
-        doc.addPage()
-        y = M
+      // Drop empties / placeholders only when we have nothing else to show
+      if (!display || /^\[answer.*required\]$/i.test(display) || /^\[answer.*to.*provided\]$/i.test(display)) {
+        display = display && /^\[.*\]$/.test(display) ? display : (display || '[No answer available]')
       }
 
-      // Render answer block
-      doc.setTextColor(25, 25, 40)
-      doc.text(blockLines, M, y)
-      y += blockLines.length * 4.5 + 4
+      // Layout: number + answer (descriptive may wrap). MCQ is single line.
+      const numberLabel = `${qNumber}.`
+      doc.setFont('helvetica', 'bold')
+      const numberLabelWidth = doc.getTextWidth(numberLabel) + 3
 
-      qNum++
+      if (isOptionSection) {
+        // MCQ/A&R single line: number then answer letter
+        doc.text(numberLabel, M, y)
+        doc.setFont('helvetica', 'normal')
+        doc.text(String(display), M + numberLabelWidth, y)
+        y += 5.5
+      } else {
+        // Descriptive: number, then wrapped answer text with bullet indent
+        doc.text(numberLabel, M, y)
+        doc.setFont('helvetica', 'normal')
+        const wrapped = doc.splitTextToSize(String(display), contentW - numberLabelWidth - 2)
+        doc.text(wrapped, M + numberLabelWidth, y)
+        y += wrapped.length * 5 + 3
+        // Blank line gap for examiner notes (per user request)
+        y += 3
+      }
+
+      // Page-break if next row won't fit
+      if (y + 8 > contentBottom) { doc.addPage(); y = M }
+      qIdx++
     }
     y += 4
   }

@@ -70,8 +70,9 @@ export default function NewRequest() {
     setSections(
       preset.sections.map((s, idx) => ({
         name: s.name,
-        type: s.type,
-        contentType: s.contentType || s.type, // ensure contentType is always set
+        // contentType is the single source of truth — type always mirrors it
+        contentType: s.contentType || s.type,
+        type: s.contentType || s.type,
         question_count: Number(s.question_count) || 1,
         marks_per_question: Number(s.marks_per_question) || 1,
         difficulty: defaultSectionDifficulty(),
@@ -86,6 +87,14 @@ export default function NewRequest() {
       const v = (key === 'marks_per_question' || key === 'question_count') && typeof value === 'string'
         ? value.replace(/^0+(?=\d)/, '') || '0'
         : value
+      // Type is always derived from contentType (single source of truth)
+      if (key === 'contentType') {
+        return { ...s, contentType: v, type: v }
+      }
+      if (key === 'type') {
+        // Defensive: if someone still sets type, mirror it to contentType too
+        return { ...s, type: v, contentType: v }
+      }
       return { ...s, [key]: v }
     }))
   }
@@ -310,15 +319,8 @@ export default function NewRequest() {
                     <input value={s.name} onChange={(e) => updateSection(i, 'name', e.target.value.toUpperCase().slice(0,2))}
                       className="w-full px-3 py-2 rounded-lg border border-slate-300 text-center font-semibold" />
                   </div>
-                  <div className="col-span-2">
-                    <label className="text-xs font-medium block mb-1">Type</label>
-                    <select value={s.type} onChange={(e) => updateSection(i, 'type', e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-slate-300">
-                      {SECTION_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                    </select>
-                  </div>
-                  <div className="col-span-3">
-                    <label className="text-xs font-medium block mb-1">Content type (NEP)</label>
+                  <div className="col-span-5">
+                    <label className="text-xs font-medium block mb-1">Question type</label>
                     <select value={s.contentType || s.type} onChange={(e) => updateSection(i, 'contentType', e.target.value)}
                       className="w-full px-3 py-2 rounded-lg border border-slate-300">
                       {getAllowedContentTypes(subject).map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
