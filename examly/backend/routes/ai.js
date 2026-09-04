@@ -2,6 +2,7 @@ import express from 'express'
 import { db, logAction } from '../db.js'
 import { requireAuth, requireRole } from '../middleware/auth.js'
 import { generateQuestions, activeProvider } from '../services/ai.js'
+import { recordQuestions, buildAvoidRepetitionBlock } from '../services/questionHistory.js'
 
 // Retry helper for rate-limited AI calls (Groq 429 / 5xx)
 async function withRetry(fn, { attempts = 4, baseDelayMs = 15000 } = {}) {
@@ -48,11 +49,13 @@ router.post('/generate', requireAuth, requireRole('admin'), async (req, res) => 
     const pdfIds = JSON.parse(reqRow.pdf_ids || '[]')
 
     let chaptersText = ''
+    let chapterLabels = []
     if (pdfIds.length > 0) {
       const placeholders = pdfIds.map(() => '?').join(',')
       const pdfs = db.prepare(
         `SELECT chapter_label, original_filename, extracted_text FROM chapter_pdfs WHERE id IN (${placeholders})`
       ).all(...pdfIds)
+      chapterLabels = pdfs.map((p) => p.chapter_label).filter(Boolean)
       chaptersText = pdfs.map((p) =>
         `--- Chapter: ${p.chapter_label} ---\n${(p.extracted_text || '').slice(0, 3000)}`
       ).join('\n\n')
@@ -69,9 +72,18 @@ router.post('/generate', requireAuth, requireRole('admin'), async (req, res) => 
       chaptersText = chaptersText.slice(0, MAX_CHARS) + '\n\n[...chapter content truncated for length...]'
     }
 
+    // Build "avoid repetition" block from history of previous questions for this subject+class
+    const avoidBlock = buildAvoidRepetitionBlock({
+      subject: reqRow.subject,
+      classLevel: reqRow.class_level,
+      maxItems: 30,
+    })
+
     const paper = await withRetry(() => generateQuestions({
       provider,
       chaptersText,
+      chapterLabels,
+      extraRules: avoidBlock,
       request: {
         subject: reqRow.subject,
         classLevel: reqRow.class_level,
@@ -81,6 +93,14 @@ router.post('/generate', requireAuth, requireRole('admin'), async (req, res) => 
         instructions: reqRow.instructions,
       },
     }))
+
+    // Record every generated question so future generations avoid them
+    recordQuestions({
+      subject: reqRow.subject,
+      classLevel: reqRow.class_level,
+      paperId: null, // paper isn't saved yet
+      sections: paper.sections || [],
+    })
 
     logAction(req.user.id, 'ai_paper_generated', {
       request_id,

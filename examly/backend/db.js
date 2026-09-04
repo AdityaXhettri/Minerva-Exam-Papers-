@@ -76,6 +76,23 @@ db.exec(`
     details TEXT,
     created_at TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS question_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject TEXT NOT NULL,
+    class_level TEXT NOT NULL,
+    chapter TEXT,
+    paper_id INTEGER,
+    question_text TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    content_type TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_question_history_lookup
+    ON question_history(subject, class_level, fingerprint);
+  CREATE INDEX IF NOT EXISTS idx_question_history_chapter
+    ON question_history(subject, class_level, chapter);
 `)
 
 // Seed default admin if no admin exists
