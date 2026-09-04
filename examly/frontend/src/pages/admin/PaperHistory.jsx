@@ -7,12 +7,36 @@ export default function PaperHistory() {
   const [papers, setPapers] = useState([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
-    api.get('/papers')
-      .then(({ data }) => setPapers(data.papers))
-      .finally(() => setLoading(false))
+    load()
   }, [])
+
+  async function load() {
+    setLoading(true)
+    try {
+      const { data } = await api.get('/papers')
+      setPapers(data.papers)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      await api.delete(`/papers/${deleteTarget.id}`)
+      setPapers((prev) => prev.filter((p) => p.id !== deleteTarget.id))
+      setDeleteTarget(null)
+    } catch (e) {
+      alert(`Delete failed: ${e.response?.data?.error || e.message}`)
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   const filtered = papers.filter((p) =>
     !filter ||
@@ -61,16 +85,21 @@ export default function PaperHistory() {
             <tbody className="divide-y divide-slate-200">
               {filtered.map((p) => (
                 <tr key={p.id}
-                  onClick={() => navigate(`/admin/papers/${p.id}`)}
-                  className="hover:bg-slate-50 cursor-pointer">
-                  <td className="px-6 py-3 font-mono text-xs text-slate-500">#{p.id}</td>
-                  <td className="px-6 py-3 font-medium">{p.subject}</td>
-                  <td className="px-6 py-3 text-slate-600">Class {p.class_level}</td>
-                  <td className="px-6 py-3 text-slate-600">{p.total_marks}</td>
-                  <td className="px-6 py-3 text-slate-500 text-sm">
+                  className="hover:bg-slate-50">
+                  <td className="px-6 py-3 font-mono text-xs text-slate-500 cursor-pointer"
+                    onClick={() => navigate(`/admin/papers/${p.id}`)}>#{p.id}</td>
+                  <td className="px-6 py-3 font-medium cursor-pointer"
+                    onClick={() => navigate(`/admin/papers/${p.id}`)}>{p.subject}</td>
+                  <td className="px-6 py-3 text-slate-600 cursor-pointer"
+                    onClick={() => navigate(`/admin/papers/${p.id}`)}>Class {p.class_level}</td>
+                  <td className="px-6 py-3 text-slate-600 cursor-pointer"
+                    onClick={() => navigate(`/admin/papers/${p.id}`)}>{p.total_marks}</td>
+                  <td className="px-6 py-3 text-slate-500 text-sm cursor-pointer"
+                    onClick={() => navigate(`/admin/papers/${p.id}`)}>
                     {new Date(p.generated_at + 'Z').toLocaleString()}
                   </td>
-                  <td className="px-6 py-3 text-sm">
+                  <td className="px-6 py-3 text-sm cursor-pointer"
+                    onClick={() => navigate(`/admin/papers/${p.id}`)}>
                     {p.printed_at ? (
                       <span className="inline-block px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-medium">
                         ✓ {new Date(p.printed_at + 'Z').toLocaleDateString()}
@@ -81,8 +110,20 @@ export default function PaperHistory() {
                       </span>
                     )}
                   </td>
-                  <td className="px-6 py-3 text-right text-brand-600 text-sm font-medium">
-                    View →
+                  <td className="px-6 py-3 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        onClick={() => navigate(`/admin/papers/${p.id}`)}
+                        className="text-brand-600 text-sm font-medium hover:underline">
+                        View →
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setDeleteTarget(p) }}
+                        className="text-red-600 text-sm font-medium hover:underline"
+                        title="Delete this paper">
+                        �� Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -90,6 +131,44 @@ export default function PaperHistory() {
           </table>
         )}
       </div>
+
+      {/* Delete confirmation modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
+            <h2 className="text-xl font-semibold text-slate-900">Delete paper?</h2>
+            <p className="text-slate-600 mt-2">
+              You're about to permanently delete:
+            </p>
+            <div className="mt-3 p-3 rounded-lg bg-slate-50 border border-slate-200">
+              <div className="font-medium">#{deleteTarget.id} · {deleteTarget.subject}</div>
+              <div className="text-sm text-slate-500">
+                Class {deleteTarget.class_level} · {deleteTarget.total_marks} marks
+              </div>
+              <div className="text-xs text-slate-400 mt-1">
+                Generated {new Date(deleteTarget.generated_at + 'Z').toLocaleString()}
+              </div>
+            </div>
+            <p className="text-sm text-red-600 mt-3">
+              ⚠ This action cannot be undone. The paper, answer key, and PDF generation record will be erased.
+            </p>
+            <div className="flex gap-2 mt-5 justify-end">
+              <button
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+                className="px-4 py-2 rounded-lg border border-slate-300 text-sm font-medium hover:bg-slate-50 disabled:opacity-50">
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                disabled={deleting}
+                className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50">
+                {deleting ? 'Deleting…' : 'Delete permanently'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

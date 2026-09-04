@@ -1,7 +1,7 @@
 import express from 'express'
 import { db, logAction } from '../db.js'
 import { requireAuth, requireRole } from '../middleware/auth.js'
-import { buildHaryanaBooklet } from '../utils/haryana.js'
+import { buildHaryanaBooklet, safeWrap } from '../utils/haryana.js'
 import { jsPDF } from 'jspdf'
 
 const router = express.Router()
@@ -77,6 +77,16 @@ router.get('/:id', requireAuth, (req, res) => {
   row.paper = JSON.parse(row.paper_json || '{}')
   row.answer_key = row.answer_key_json ? JSON.parse(row.answer_key_json) : null
   res.json({ paper: row })
+})
+
+// Delete paper (admin only)
+router.delete('/:id', requireAuth, requireRole('admin'), (req, res) => {
+  const row = db.prepare(`SELECT id FROM papers WHERE id = ?`).get(req.params.id)
+  if (!row) return res.status(404).json({ error: 'Paper not found' })
+
+  db.prepare(`DELETE FROM papers WHERE id = ?`).run(req.params.id)
+  logAction(req.user.id, 'paper_deleted', { paper_id: req.params.id })
+  res.json({ ok: true })
 })
 
 // Download PDF (admin only) — ?layout=haryana (default) or standard
@@ -171,60 +181,107 @@ router.get('/:id/answer-key/pdf', requireAuth, requireRole('admin'), async (req,
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   const PW = 210
   const PH = 297
-  const M = 15
+  const M = 20
+  const contentW = PW - 2 * M
+  const contentBottom = PH - M
 
   let y = M
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(14)
+  // Title
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(16)
+  doc.setTextColor(20, 20, 35)
   doc.text('ANSWER KEY', PW / 2, y, { align: 'center' })
   y += 8
-  doc.setFontSize(10)
+  doc.setFontSize(11)
+  doc.setTextColor(60, 60, 75)
   doc.text(`${row.subject || ''} — Class ${row.class_level || ''}`, PW / 2, y, { align: 'center' })
-  y += 5
-  doc.setFontSize(9)
-  doc.setFont('helvetica', 'normal')
+  y += 6
+  doc.setFontSize(10)
+  doc.setTextColor(40, 40, 55)
   doc.text(`Total Marks: ${row.total_marks || ''}`, PW / 2, y, { align: 'center' })
-  y += 10
+  y += 4
+  y += 2
+  doc.setDrawColor(220, 220, 230)
+  doc.setLineWidth(0.2)
+  doc.line(M, y, PW - M, y)
+  doc.setDrawColor(0, 0, 0)
+  y += 6
+  doc.setTextColor(0, 0, 0)
+
+  // Build a lookup of answer_key data by question number
+  const akByNum = {}
+  if (ak && ak.sections) {
+    let akQ = 1
+    for (const sec of ak.sections) {
+      for (const q of sec.questions || []) {
+        akByNum[akQ] = q
+        akQ++
+      }
+    }
+  }
 
   let qNum = 1
   for (const sec of paper.sections || []) {
-    if (y > PH - M - 20) {
+    // Section header
+    if (y + 14 > contentBottom) {
       doc.addPage()
       y = M
     }
-    doc.setFont('helvetica', 'bold')
-    doc.setFontSize(11)
-    doc.text(sec.label || sec.name || 'Section', M, y)
-    y += 6
     doc.setFont('helvetica', 'normal')
+    doc.setFontSize(12)
+    doc.setTextColor(40, 40, 55)
+    doc.text(sec.label || sec.name || 'Section', M, y)
+    y += 5
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(9.5)
+    doc.setTextColor(80, 80, 95)
+    const subLine = `${sec.questions?.length || 0} × ${sec.marks_per_question || 0} = ${(sec.questions?.length || 0) * (sec.marks_per_question || 0)} marks`
+    doc.text(subLine, M, y)
+    y += 6
+    doc.setTextColor(0, 0, 0)
+
     doc.setFontSize(10)
     for (const q of sec.questions || []) {
-      if (y > PH - M - 10) {
+      // Get answer info from answer_key (if available) — fallback to paper's own correct
+      const akQ = akByNum[qNum] || {}
+      const correct = akQ.correct || q.correct
+      const explanation = akQ.explanation || akQ.modelAnswer || q.modelAnswer || null
+
+      // Build answer block lines
+      const answerBlock = []
+      answerBlock.push(`Q${qNum}.`)
+      if (correct) {
+        answerBlock.push(`   Answer: ${correct}`)
+      }
+      if (explanation) {
+        // Split explanation into step-by-step lines (if multi-line)
+        const steps = String(explanation).split(/\n+/).map(s => s.trim()).filter(Boolean)
+        if (steps.length > 1) {
+          answerBlock.push('   Solution:')
+          steps.forEach((s, i) => {
+            answerBlock.push(`     ${i + 1}. ${s}`)
+          })
+        } else {
+          answerBlock.push(`   Explanation: ${explanation}`)
+        }
+      }
+      const blockText = answerBlock.join('\n')
+      const blockLines = safeWrap(doc, blockText, contentW)
+      const blockH = blockLines.length * 4.5 + 4
+
+      if (y + blockH > contentBottom) {
         doc.addPage()
         y = M
       }
-      const text = `Q${qNum}. ${q.text || ''}`
-      const lines = doc.splitTextToSize(text, PW - 2 * M)
-      doc.text(lines, M, y)
-      y += lines.length * 5
-      // Correct option letter if MCQ
-      if (q.correct) {
-        doc.setFont('helvetica', 'bold')
-        doc.setTextColor(0, 120, 0)
-        doc.text(`Answer: ${q.correct}`, M + 4, y)
-        doc.setTextColor(0, 0, 0)
-        doc.setFont('helvetica', 'normal')
-        y += 5
-      } else if (q.modelAnswer) {
-        const aLines = doc.splitTextToSize(`Model Answer: ${q.modelAnswer}`, PW - 2 * M - 4)
-        doc.text(aLines, M + 4, y)
-        y += aLines.length * 5
-      } else {
-        y += 2
-      }
+
+      // Render answer block
+      doc.setTextColor(25, 25, 40)
+      doc.text(blockLines, M, y)
+      y += blockLines.length * 4.5 + 4
+
       qNum++
     }
-    y += 3
+    y += 4
   }
 
   const buf = Buffer.from(doc.output('arraybuffer'))

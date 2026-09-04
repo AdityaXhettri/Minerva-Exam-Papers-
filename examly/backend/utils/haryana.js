@@ -1,193 +1,22 @@
-// Haryana Board booklet PDF generator
-// A4 LANDSCAPE sheet folded twice → 4-page booklet.
-// After folding, student writes on pages in order: 1 → 2 → 3 → 4
-// When UNFOLDED (single landscape A4), the quadrants must read:
-//   ┌──────────────┬──────────────┐
-//   │   Page 4     │   Page 1     │   ← top half (one side of sheet)
-//   ├══════════════┼══════════════┤   ← vertical fold line (between 4 & 1)
-//   │   Page 2     │   Page 3     │   ← bottom half (other side)
-//   └──────────────┴──────────────┘
-//       horizontal fold line runs through the middle (between top half & bottom half)
-//
-// After folding, the booklet reads in order: Page 1 (front) → flip right → Page 2 → flip again → Page 3 → flip → Page 4 (back cover).
-//
-// Content fits each panel fully; if questions don't all fit in 4 quadrants, additional landscape sheets are generated.
-//
-// NO truncation — every question text, every option, every line renders fully. Overflow moves to next sheet.
+// Exam paper PDF generator — A4, 4-column options, character-level safe wrap.
+// Each question is laid out independently; estimate = actual rendering.
 
 import { jsPDF } from 'jspdf'
 
-const PAGE_W = 297 // mm landscape
-const PAGE_H = 210 // mm landscape
-const MARGIN = 8 // mm
+const PAGE_W = 210 // mm portrait A4
+const PAGE_H = 297 // mm portrait A4
 
 // ============================================================
-// Quadrant geometry helpers
+// SECTION + QUESTION PACKING
 // ============================================================
-const QUAD = {
-  tl: { x: MARGIN, y: MARGIN, w: PAGE_W / 2 - MARGIN - 4, h: PAGE_H / 2 - MARGIN - 4 },
-  tr: { x: PAGE_W / 2 + 4, y: MARGIN, w: PAGE_W / 2 - MARGIN - 4, h: PAGE_H / 2 - MARGIN - 4 },
-  bl: { x: MARGIN, y: PAGE_H / 2 + 4, w: PAGE_W / 2 - MARGIN - 4, h: PAGE_H / 2 - MARGIN - 4 },
-  br: { x: PAGE_W / 2 + 4, y: PAGE_H / 2 + 4, w: PAGE_W / 2 - MARGIN - 4, h: PAGE_H / 2 - MARGIN - 4 },
-}
-
-// Approximate height a question consumes: header + lines + spacing + options
-function estimateQuestionHeight(q) {
-  const lineH = 3.6
-  const charsPerLine = 60 // approx for helvetica 7.5pt at our quadrant width
-  const textLines = Math.ceil((q.text.length + 10) / charsPerLine)
-  let h = textLines * lineH
-  if (q.options && q.options.length) {
-    h += q.options.length * lineH
-  }
-  h += 2 // gap after
-  return h
-}
-
-function estimateSectionHeaderHeight() {
-  return 5 // bold 8pt + small gap
-}
-
-// ============================================================
-// Drawing helpers
-// ============================================================
-function drawFoldLines(doc) {
-  doc.setLineDashPattern([2, 2], 0)
-  doc.setDrawColor(140, 140, 140)
-  doc.setLineWidth(0.3)
-  doc.line(PAGE_W / 2, MARGIN, PAGE_W / 2, PAGE_H - MARGIN) // vertical
-  doc.line(MARGIN, PAGE_H / 2, PAGE_W - MARGIN, PAGE_H / 2) // horizontal
-  doc.setLineDashPattern([], 0)
-  doc.setDrawColor(0, 0, 0)
-}
-
-function drawPageMarker(doc, quadrant, pageNum) {
-  const q = QUAD[quadrant]
-  doc.setFontSize(7)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(100, 100, 100)
-  doc.text(`Page ${pageNum}`, q.x + 2, q.y + 4)
-  doc.setTextColor(0, 0, 0)
-}
-
-function drawCoverBlock(doc, headerInfo, paper) {
-  // Page 1 = top-right quadrant. Clean cover — title, subtitle, marks, date, instructions.
-  const q = QUAD.tr
-  const x = q.x
-  const w = q.w
-  let y = q.y + 8
-
-  // Title — e.g. "Mathematics — Class 12"
-  doc.setFontSize(13)
-  doc.setFont('helvetica', 'bold')
-  doc.text(paper.title || '', x, y)
-  y += 6
-
-  // Subtitle — e.g. "Examination Paper"
-  doc.setFontSize(10)
-  doc.setFont('helvetica', 'normal')
-  doc.text(paper.subtitle || '', x, y)
-  y += 7
-
-  // Marks + date row
-  doc.setFontSize(9)
-  doc.text(`Total Marks: ${headerInfo.totalMarks || '____'}`, x, y); y += 5
-  doc.text(`Date: ${headerInfo.examDate || '__________'}`, x, y); y += 6
-
-  // General instructions (free text from request)
-  if (paper.instructions) {
-    doc.setFont('helvetica', 'italic')
-    doc.setFontSize(8)
-    const lines = doc.splitTextToSize(paper.instructions, w - 4)
-    doc.text(lines, x, y)
-    y += lines.length * 4
-    doc.setFont('helvetica', 'normal')
-  }
-
-  return y + 2
-}
-
-function drawSectionHeader(doc, quadrant, y, section) {
-  const q = QUAD[quadrant]
-  const w = q.w
-
-  // Section line — e.g. "Section A — Multiple Choice Questions"
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(9)
-  doc.setTextColor(20, 20, 80)
-  doc.text(section.label, q.x, y)
-  y += 4
-
-  // Sub-line — e.g. "(3 × 1 marks)"
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(7.5)
-  doc.setTextColor(60, 60, 60)
-  doc.text(section.subLine, q.x, y)
-  y += 5
-  doc.setTextColor(0, 0, 0)
-  doc.setFontSize(7.5)
-  return y
-}
-
-/**
- * Render a question into a quadrant at the given y. Returns updated y, or null if it doesn't fit.
- * NO truncation — if it doesn't fit, returns null and caller moves to next quadrant/sheet.
- */
-function renderQuestion(doc, quadrant, y, q) {
-  const qa = QUAD[quadrant]
-  const lineH = 3.6
-  const textW = qa.w - 6
-
-  // Estimate height needed
-  const headText = `Q${q.qNum}. ${q.text}  [${q.marks}m]`
-  const headLines = doc.splitTextToSize(headText, textW)
-  const optLines = []
-  if (q.options && q.options.length) {
-    for (const opt of q.options) {
-      const optStr = typeof opt === 'string' ? opt : `(${opt.letter}) ${opt.text}`
-      optLines.push(doc.splitTextToSize(`   ${optStr}`, textW - 4))
-    }
-  }
-  const totalH = headLines.length * lineH + optLines.reduce((s, arr) => s + arr.length * lineH, 0) + 2
-
-  // Check if it fits in this quadrant
-  if (y + totalH > qa.y + qa.h) return null // doesn't fit
-
-  // Draw question header
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(7.5)
-  doc.setTextColor(0, 0, 0)
-  doc.text(headLines, qa.x, y)
-  y += headLines.length * lineH
-
-  // Draw options (MCQ)
-  if (optLines.length) {
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(7)
-    for (const lines of optLines) {
-      doc.text(lines, qa.x + 3, y)
-      y += lines.length * lineH
-    }
-    doc.setFontSize(7.5)
-  }
-  y += 2 // gap
-  return y
-}
-
-/**
- * Pack questions into quadrant-sized pages.
- * Returns array of "sheets", each sheet = { p1:[], p2:[], p3:[], p4:[] }.
- * Each page holds questions that fit; leftover questions go to next sheet.
- */
-function packIntoSheets(sections) {
-  // Build flat list with section context attached to each question
+function packSections(sections) {
   const items = []
   let qNum = 1
   for (const sec of sections) {
+    const totalMarks = (sec.questions?.length || 0) * (sec.marks_per_question || 0)
     const secObj = {
-      key: `${sec.name || sec.label || ''}__${qNum}`,
-      label: `Section ${sec.name || sec.label || ''} — ${sec.type_label || sec.type || ''}`,
-      subLine: `(${sec.questions.length} × ${sec.marks_per_question} marks)`,
+      label: `Section ${sec.name || sec.label || ''} — ${sec.type_label || friendlyType(sec.type) || ''}`,
+      subLine: `${sec.questions?.length || 0} × ${sec.marks_per_question || 0} = ${totalMarks} marks`,
     }
     for (const q of sec.questions || []) {
       items.push({
@@ -199,150 +28,280 @@ function packIntoSheets(sections) {
       })
     }
   }
+  return items
+}
 
-  const sheets = []
-  let remaining = items.slice()
+function friendlyType(t) {
+  switch ((t || '').toLowerCase()) {
+    case 'mcq': return 'Multiple Choice Questions'
+    case 'vshort': return 'Very Short Answer'
+    case 'short': return 'Short Answer'
+    case 'long': return 'Long Answer'
+    case 'fill': return 'Fill in the Blanks'
+    case 'truefalse': return 'True / False'
+    default: return ''
+  }
+}
+
+// ============================================================
+// SAFE TEXT WRAP — ₹ symbol replaced with "Rs." for reliable width
+// jsPDF's helvetica font under-reports ₹ width causing overflow.
+// We replace ₹ with "Rs." (3 ASCII chars, exact known width) for
+// both measurement AND final output — guaranteed to never overflow.
+// ============================================================
+
+function safeWrap(doc, text, maxW) {
+  if (!text) return ['']
+  const safeMaxW = maxW * 0.95 // 5% safety margin — Rs. is ASCII, exact width
+
+  // Replace ₹ with "Rs." for both measurement and display
+  const measureText = text.replace(/₹/g, 'Rs.')
+
+  const lines = []
+  let remaining = measureText
 
   while (remaining.length > 0) {
-    const COVER_RESERVE = 32 // reserve for clean cover (title + subtitle + marks + date + instructions)
-    const sheet = { p1: [], p2: [], p3: [], p4: [] }
-    let lastSecKey = null
+    const rawLines = doc.splitTextToSize(remaining, safeMaxW)
+    if (rawLines.length === 0) break
 
-    // Page 1 — needs cover reserve
-    let y = 0
-    for (const q of remaining) {
-      const needHeader = q.section.key !== lastSecKey
-      let estY = y + (needHeader ? estimateSectionHeaderHeight() + 2 : 0) + estimateQuestionHeight(q)
-      if (estY > QUAD.tr.h - COVER_RESERVE) break
-      sheet.p1.push(q)
-      lastSecKey = q.section.key
-      y = estY
+    let line = rawLines[0]
+    let actualW = doc.getTextWidth(line)
+
+    if (actualW <= safeMaxW) {
+      lines.push(line)
+      remaining = remaining.slice(line.length).trim()
+      continue
     }
 
-    // Page 2
-    y = 0
-    const afterP1 = sheet.p1.length
-    lastSecKey = sheet.p1.length ? sheet.p1[sheet.p1.length - 1].section.key : null
-    for (const q of remaining.slice(afterP1)) {
-      const needHeader = q.section.key !== lastSecKey
-      let estY = y + (needHeader ? estimateSectionHeaderHeight() + 2 : 0) + estimateQuestionHeight(q)
-      if (estY > QUAD.bl.h - 4) break
-      sheet.p2.push(q)
-      lastSecKey = q.section.key
-      y = estY
+    // Binary search longest prefix that fits
+    let lo = 0, hi = line.length
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2)
+      if (doc.getTextWidth(line.slice(0, mid)) <= safeMaxW) lo = mid
+      else hi = mid - 1
     }
 
-    // Page 3
-    y = 0
-    const afterP2 = afterP1 + sheet.p2.length
-    lastSecKey = sheet.p2.length ? sheet.p2[sheet.p2.length - 1].section.key : (sheet.p1.length ? sheet.p1[sheet.p1.length - 1].section.key : null)
-    for (const q of remaining.slice(afterP2)) {
-      const needHeader = q.section.key !== lastSecKey
-      let estY = y + (needHeader ? estimateSectionHeaderHeight() + 2 : 0) + estimateQuestionHeight(q)
-      if (estY > QUAD.br.h - 4) break
-      sheet.p3.push(q)
-      lastSecKey = q.section.key
-      y = estY
+    let truncated = line.slice(0, lo)
+    const lastSpace = truncated.lastIndexOf(' ')
+    if (lastSpace > truncated.length * 0.4) {
+      truncated = truncated.slice(0, lastSpace)
     }
 
-    // Page 4
-    y = 0
-    const afterP3 = afterP2 + sheet.p3.length
-    lastSecKey = sheet.p3.length ? sheet.p3[sheet.p3.length - 1].section.key : (sheet.p2.length ? sheet.p2[sheet.p2.length - 1].section.key : (sheet.p1.length ? sheet.p1[sheet.p1.length - 1].section.key : null))
-    for (const q of remaining.slice(afterP3)) {
-      const needHeader = q.section.key !== lastSecKey
-      let estY = y + (needHeader ? estimateSectionHeaderHeight() + 2 : 0) + estimateQuestionHeight(q)
-      if (estY > QUAD.tl.h - 4) break
-      sheet.p4.push(q)
-      lastSecKey = q.section.key
-      y = estY
-    }
-
-    const totalPlaced = sheet.p1.length + sheet.p2.length + sheet.p3.length + sheet.p4.length
-    if (totalPlaced === 0) {
-      sheet.p4.push(remaining[0]) // safety
-    }
-
-    sheets.push(sheet)
-
-    const consumed = sheet.p1.length + sheet.p2.length + sheet.p3.length + sheet.p4.length
-    remaining = remaining.slice(consumed)
+    lines.push(truncated)
+    remaining = remaining.slice(truncated.length).trim()
   }
 
-  return sheets
+  return lines.length > 0 ? lines : ['']
 }
 
-/**
- * Render one page (quadrant) of a sheet.
- * Returns the final y-position (used as startY for next page, e.g. after cover block).
- */
-function renderPage(doc, questions, quadrant, startY, lastSectionRef) {
-  const qa = QUAD[quadrant]
-  let y = (typeof startY === 'number' && startY > 0) ? startY : qa.y + 4
-  doc.setFontSize(7.5)
+// ============================================================
+// LAYOUT A QUESTION — returns { height, render }
+// Computes exact height first (for pagination), then renders at given y.
+// ============================================================
+function layoutQuestion(doc, item, opts, contentW) {
+  const { qTextSize, optionSize, lineH, qGap } = opts
+
   doc.setFont('helvetica', 'normal')
-  let lastSecKey = lastSectionRef ? lastSectionRef.value : null
+  doc.setFontSize(qTextSize)
 
-  for (const q of questions) {
-    // Section header if section changed
-    if (q.section.key !== lastSecKey) {
-      if (y + 9 > qa.y + qa.h) break // section header needs 9mm
-      y = drawSectionHeader(doc, quadrant, y, q.section)
-      lastSecKey = q.section.key
-      if (lastSectionRef) lastSectionRef.value = q.section.key
+  const headStr = `Q${item.qNum}.`
+  const numW = doc.getTextWidth(headStr + ' ')
+  const textMaxW = contentW - numW
+
+  // 1) Wrap question text safely
+  const textLines = safeWrap(doc, item.text, textMaxW)
+  let h = textLines.length * lineH
+
+  // 2) Options — 2-column vertical layout (wider columns, lambi options fit honge)
+  let optLayout = null
+  if (item.options && item.options.length) {
+    doc.setFontSize(optionSize)
+    const optIndent = 4
+    const optGap = 4
+    const optColW = (contentW - optIndent - optGap) / 2
+
+    // Build per-option wrap info — 2 columns
+    optLayout = item.options.map((opt, i) => {
+      const text = typeof opt === 'string' ? opt : opt.text
+      const lbl = `(${String.fromCharCode(97 + i)}) ${text}`
+      const lines = safeWrap(doc, lbl, optColW)
+      return { lbl, lines, col: i % 2, row: Math.floor(i / 2), lineCount: lines.length }
+    })
+
+    // Group by row, find max lineCount per row
+    const numRows = Math.ceil(item.options.length / 2)
+    const rowHeights = []
+    for (let r = 0; r < numRows; r++) {
+      let max = 1
+      for (const o of optLayout) {
+        if (o.row === r && o.lineCount > max) max = o.lineCount
+      }
+      rowHeights.push(max * lineH)
+    }
+    const totalOptH = rowHeights.reduce((s, x) => s + x, 0)
+    h += totalOptH
+  }
+
+  h += qGap // gap after each question
+
+  return {
+    height: h,
+    render: (doc, y) => {
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(qTextSize)
+      doc.setTextColor(25, 25, 40)
+      doc.text(headStr, opts.marginX, y)
+      // Render question text lines
+      doc.text(textLines, opts.marginX + numW, y)
+      let cursorY = y + textLines.length * lineH
+
+      // Render options — 2 columns
+      if (optLayout) {
+        doc.setFontSize(optionSize)
+        doc.setTextColor(35, 35, 50)
+        const optIndent = 4
+        const optGap = 4
+        const optColW = (contentW - optIndent - optGap) / 2
+        let rowY = cursorY + 1
+        const numRows = Math.ceil(item.options.length / 2)
+        for (let r = 0; r < numRows; r++) {
+          let rowMaxLines = 1
+          for (const o of optLayout) {
+            if (o.row === r && o.lineCount > rowMaxLines) rowMaxLines = o.lineCount
+          }
+          for (const o of optLayout) {
+            if (o.row !== r) continue
+            const xPos = opts.marginX + optIndent + o.col * (optColW + optGap)
+            doc.text(o.lines, xPos, rowY)
+          }
+          rowY += rowMaxLines * lineH
+        }
+        cursorY = rowY
+      }
+
+      doc.setTextColor(0, 0, 0)
+      return cursorY + qGap
+    },
+  }
+}
+
+// ============================================================
+// RENDER PASS — lays out items onto a fresh doc
+// ============================================================
+function renderPass(paper, items, opts) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  const cx = PAGE_W / 2
+  const contentW = PAGE_W - opts.marginX * 2
+  const contentBottom = PAGE_H - opts.marginBottom
+
+  // ---- Paper header ----
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(opts.titleSize)
+  doc.setTextColor(20, 20, 35)
+  doc.text(paper.title || '', cx, opts.marginTop, { align: 'center' })
+  let y = opts.marginTop + opts.titleSize * 0.42
+
+  doc.setFontSize(opts.subtitleSize)
+  doc.setTextColor(60, 60, 75)
+  doc.text(paper.subtitle || '', cx, y, { align: 'center' })
+  y += opts.subtitleSize * 0.55
+
+  doc.setFontSize(opts.marksSize)
+  doc.setTextColor(40, 40, 55)
+  doc.text(`Total Marks: ${paper.totalMarks || '____'}`, cx - 28, y, { align: 'center' })
+  doc.text(`Date: ${paper.examDate || '__________'}`, cx + 28, y, { align: 'center' })
+  y += opts.marksSize * 0.6
+
+  if (paper.instructions) {
+    doc.setFont('helvetica', 'italic')
+    doc.setFontSize(opts.sectionSubSize)
+    doc.setTextColor(80, 80, 95)
+    const lines = safeWrap(doc, paper.instructions, contentW)
+    doc.text(lines, cx, y, { align: 'center' })
+    y += lines.length * opts.sectionSubSize * 0.5
+  }
+
+  y += 2
+  doc.setDrawColor(220, 220, 230)
+  doc.setLineWidth(0.2)
+  doc.line(opts.marginX, y, PAGE_W - opts.marginX, y)
+  doc.setDrawColor(0, 0, 0)
+  y += 5
+  doc.setTextColor(0, 0, 0)
+
+  // ---- Pre-compute layout for ALL items (to know heights) ----
+  let renderedSecHeader = false // section header on current page?
+  let currentSection = null
+
+  for (const item of items) {
+    const layout = layoutQuestion(doc, item, opts, contentW)
+    const isNewSection = item.section.label !== currentSection
+
+    // Section header only renders once per section (first question of section)
+    const sectionH = isNewSection ? opts.sectionHeaderH : 0
+
+    // Page break if needed
+    if (y + sectionH + layout.height > contentBottom) {
+      doc.addPage()
+      y = opts.marginTop
+      renderedSecHeader = false
     }
 
-    const newY = renderQuestion(doc, quadrant, y, q)
-    if (newY === null) break
-    y = newY
+    // Render section header if new section OR new page with same section
+    if (isNewSection || (!renderedSecHeader && currentSection === item.section.label)) {
+      // If section continues across pages, render header again (it's natural for exam papers)
+      // BUT user said only once — so we track per-section across pages
+      if (isNewSection || !currentSection || currentSection !== item.section.label) {
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(opts.sectionSize)
+        doc.setTextColor(40, 40, 55)
+        doc.text(item.section.label, opts.marginX, y)
+        y += opts.sectionSize * 0.45
+        doc.setFontSize(opts.sectionSubSize)
+        doc.setTextColor(80, 80, 95)
+        doc.text(item.section.subLine, opts.marginX, y)
+        y += opts.sectionSubSize * 0.55
+        doc.setTextColor(0, 0, 0)
+        y += 2
+      }
+      currentSection = item.section.label
+      renderedSecHeader = true
+    }
+
+    // Render the question
+    y = layout.render(doc, y)
   }
 
-  return y
+  return { doc, pageCount: doc.getNumberOfPages() }
 }
 
-/**
- * Build the Haryana booklet PDF.
- * Returns a Buffer.
- */
+// ============================================================
+// MAIN BUILDER
+// ============================================================
+export function buildPaperPdf(paper) {
+  const items = packSections(paper.sections || [])
+
+  // Try passes from largest → smallest
+  const passes = [
+    // scale 1.0 (normal) — readable + proper fit with generous edge margins
+    { titleSize: 16, subtitleSize: 11, marksSize: 10, sectionSize: 12, sectionSubSize: 9.5, qTextSize: 10, optionSize: 9, lineH: 4.4, qGap: 4.5, marginX: 20, marginTop: 14, marginBottom: 14, sectionHeaderH: 13 },
+    // scale 0.92
+    { titleSize: 15, subtitleSize: 10.5, marksSize: 9.5, sectionSize: 11.5, sectionSubSize: 9, qTextSize: 9.5, optionSize: 8.5, lineH: 4.1, qGap: 4, marginX: 19, marginTop: 13, marginBottom: 13, sectionHeaderH: 12 },
+    // scale 0.85
+    { titleSize: 14, subtitleSize: 10, marksSize: 9, sectionSize: 11, sectionSubSize: 8.5, qTextSize: 9, optionSize: 8, lineH: 3.8, qGap: 3.5, marginX: 18, marginTop: 12, marginBottom: 12, sectionHeaderH: 11 },
+    // scale 0.78
+    { titleSize: 13, subtitleSize: 9.5, marksSize: 8.5, sectionSize: 10, sectionSubSize: 8, qTextSize: 8.5, optionSize: 7.5, lineH: 3.5, qGap: 3, marginX: 17, marginTop: 11, marginBottom: 11, sectionHeaderH: 10 },
+  ]
+
+  // Use first pass — readability > page count (user wants this)
+  const result = renderPass(paper, items, passes[0])
+  return Buffer.from(result.doc.output('arraybuffer'))
+}
+
+// Backward-compat alias
 export function buildHaryanaBooklet(paper) {
-  const sheets = packIntoSheets(paper.sections || [])
-  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
-
-  const headerInfo = {
-    schoolName: paper.schoolName || process.env.SCHOOL_NAME || '',
-    classLevel: paper.classLevel || '',
-    subject: paper.subject || '',
-    examDate: paper.examDate || '',
-    totalMarks: paper.totalMarks || '',
-    timeAllowed: paper.timeAllowed || '',
-  }
-
-  for (let s = 0; s < sheets.length; s++) {
-    if (s > 0) doc.addPage() // additional sheet = additional landscape A4 page
-
-    const sheet = sheets[s]
-    const lastSectionRef = { value: null }
-    const totalPages = sheets.length * 4
-
-    // Page numbers across all sheets:
-    //   Sheet 0: Page 1, 2, 3, 4
-    //   Sheet 1: Page 5, 6, 7, 8  (i.e. 4+1, 4+2, ...)
-    const basePage = s * 4
-
-    drawFoldLines(doc)
-    drawPageMarker(doc, 'tl', basePage + 4)
-    renderPage(doc, sheet.p4, 'tl', undefined, lastSectionRef)
-
-    drawPageMarker(doc, 'tr', basePage + 1)
-    const coverEndY = drawCoverBlock(doc, headerInfo, paper)
-    renderPage(doc, sheet.p1, 'tr', coverEndY - QUAD.tr.y, lastSectionRef)
-
-    drawPageMarker(doc, 'bl', basePage + 2)
-    renderPage(doc, sheet.p2, 'bl', undefined, lastSectionRef)
-
-    drawPageMarker(doc, 'br', basePage + 3)
-    renderPage(doc, sheet.p3, 'br', undefined, lastSectionRef)
-  }
-
-  return Buffer.from(doc.output('arraybuffer'))
+  return buildPaperPdf(paper)
 }
+
+// Export safeWrap for use by other PDF generators (answer key, etc.)
+export { safeWrap }

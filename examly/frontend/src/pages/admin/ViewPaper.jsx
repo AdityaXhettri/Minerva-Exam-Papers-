@@ -9,7 +9,6 @@ export default function ViewPaper() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [showAnswers, setShowAnswers] = useState(false)
-  const [useHaryanaLayout, setUseHaryanaLayout] = useState(true)
 
   useEffect(() => {
     api.get(`/papers/${id}`)
@@ -18,11 +17,26 @@ export default function ViewPaper() {
       .finally(() => setLoading(false))
   }, [id])
 
-  function handleDownloadPDF() {
-    const layout = useHaryanaLayout ? 'haryana' : 'standard'
-    // Hit backend endpoint — it streams the PDF and marks paper as printed
+  function handleViewPDF() {
+    // Open PDF in new tab so user can preview/print directly
     const token = localStorage.getItem('examly_token')
-    fetch(`/api/papers/${id}/pdf?layout=${layout}`, {
+    fetch(`/api/papers/${id}/pdf`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.blob()
+      })
+      .then((blob) => {
+        const url = URL.createObjectURL(blob)
+        window.open(url, '_blank')
+      })
+      .catch((e) => alert(`PDF open failed: ${e.message}`))
+  }
+
+  function handleDownloadPDF() {
+    const token = localStorage.getItem('examly_token')
+    fetch(`/api/papers/${id}/pdf`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((res) => {
@@ -33,7 +47,7 @@ export default function ViewPaper() {
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
-        a.download = `paper-${id}-${layout}.pdf`
+        a.download = `paper-${id}.pdf`
         document.body.appendChild(a)
         a.click()
         a.remove()
@@ -86,23 +100,22 @@ export default function ViewPaper() {
               {paper.printed_at && ` · Last printed ${new Date(paper.printed_at + 'Z').toLocaleString()}`}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <button onClick={() => setShowAnswers(!showAnswers)}
               className={`px-4 py-2 rounded-lg border text-sm font-medium ${showAnswers ? 'border-amber-500 bg-amber-50 text-amber-700' : 'border-slate-300 hover:bg-slate-50'}`}>
               {showAnswers ? '🙈 Hide answers' : '🔑 Show answers'}
             </button>
-            <button onClick={handleDownloadPDF}
+            <button onClick={handleViewPDF}
               className="px-5 py-2 rounded-lg bg-brand-500 text-white font-medium hover:bg-brand-600">
-              ⬇ Download PDF
+              👁 View PDF
+            </button>
+            <button onClick={handleDownloadPDF}
+              className="px-4 py-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-sm font-medium">
+              ⬇ Download
             </button>
             <button onClick={handleDownloadAnswerKey}
               className="px-4 py-2 rounded-lg bg-emerald-500 text-white font-medium hover:bg-emerald-600">
               🔑 Answer Key
-            </button>
-            <button onClick={() => setUseHaryanaLayout(!useHaryanaLayout)}
-              className={`px-3 py-2 rounded-lg border text-sm font-medium ${useHaryanaLayout ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-slate-300 hover:bg-slate-50'}`}
-              title="Toggle Haryana Board format">
-              {useHaryanaLayout ? '📄 Haryana' : '📄 A4'}
             </button>
           </div>
         </div>

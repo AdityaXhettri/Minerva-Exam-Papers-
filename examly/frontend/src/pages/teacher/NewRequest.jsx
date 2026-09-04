@@ -2,9 +2,8 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../../lib/api.js'
 import { useAuth } from '../../lib/useAuth.jsx'
+import { SUBJECTS, CLASSES } from '../../lib/subjects.js'
 
-const SUBJECTS = ['Mathematics', 'English', 'Hindi', 'Science', 'Social Science', 'EVS', 'Sanskrit', 'Computer Science']
-const CLASSES = ['1','2','3','4','5','6','7','8','9','10','11','12']
 const SECTION_TYPES = [
   { value: 'mcq', label: 'MCQ' },
   { value: 'vshort', label: 'Very Short Answer' },

@@ -1,8 +1,6 @@
 import { useState, useEffect } from 'react'
 import api from '../../lib/api.js'
-
-const SUBJECTS = ['Mathematics', 'English', 'Hindi', 'Science', 'Social Science', 'EVS', 'Sanskrit', 'Computer Science']
-const CLASSES = ['1','2','3','4','5','6','7','8','9','10','11','12']
+import { SUBJECTS, CLASSES } from '../../lib/subjects.js'
 
 export default function PDFs() {
   const [pdfs, setPdfs] = useState([])
